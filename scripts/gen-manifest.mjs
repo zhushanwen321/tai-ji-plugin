@@ -40,8 +40,23 @@ for (const [family, meta] of Object.entries(FAMILIES)) {
 
 const manifest = {
   schemaVersion: 1,
-  generatedAt: new Date().toISOString(),
+  // 宿主 isWoolAssetManifest（taiji 主仓 packages/shared/src/wool.ts）要求 epoch 毫秒
+  // 数字——曾发过 ISO 字符串版本被宿主 bad_shape 拒收（发布链无消费侧对拍的缺口）。
+  generatedAt: Date.now(),
   families,
+}
+
+// 生成后按宿主守卫同款规则自检（字面量镜像，漂移 = 发布物被宿主拒收）：
+// schemaVersion=1 / generatedAt 数字 / families 三字段逐项。不过即 exit 1 拦截上传。
+const bad = Object.entries(families).filter(([, e]) =>
+  typeof e.pkg !== 'string' || e.pkg.length === 0 ||
+  typeof e.version !== 'string' || e.version.length === 0 ||
+  typeof e.displayName !== 'string' || typeof e.vendor !== 'string' ||
+  (e.credentialsSource !== 'ide-extract' && e.credentialsSource !== 'oauth') ||
+  typeof e.riskNotice !== 'string')
+if (manifest.schemaVersion !== 1 || typeof manifest.generatedAt !== 'number' || bad.length > 0) {
+  console.error(`[gen-manifest] 生成物未过宿主 schema 自检（bad families: ${bad.map(([k]) => k).join(', ') || '无'}——检查 schemaVersion/generatedAt 类型）`)
+  process.exit(1)
 }
 
 const out = process.argv[2] ?? join(ROOT, 'wool-manifest.json')
