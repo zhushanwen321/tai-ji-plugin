@@ -28,4 +28,5 @@ pnpm test           # 各包 vitest（经 test-guard/taijiTestConfig 工厂挂�
 ## 发布
 
 - changeset 管版本（`pnpm changeset-version` / `pnpm changeset-publish`）；CI release workflow 发布 npm + 生成 `wool-manifest.json`（taiji 宿主经 DEFAULT_WOOL_MANIFEST_URL 拉取钉版本清单）并上传到 GitHub release
+- 发布后 GitCode 同步（代码镜像 + release 资产）= dev-merge 技能阶段 4，本地执行非 CI——跨境直传必然超时的主仓同款裁决；入口技能 = `.agents/skills/dev-merge/SKILL.md`
 - 发布前供应链自查：能读凭据的可执行代码只从本仓官方源出（npm provenance）
