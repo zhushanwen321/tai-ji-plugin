@@ -48,8 +48,23 @@ export type WoolManageErrorCode = (typeof WOOL_MANAGE_ERROR_CODES)[number];
 export interface WoolManageRequest { // oe-exempt:20261022:framework:taiji↔扩展管理协议请求 envelope——宿主管理会话构造 /wool-<family> 参数文本、parseWoolManageRequest 唯一解析入口（宿主侧对齐形状见 packages/shared/src/wool.ts 管理协议注释）
 	v: 1;
 	action: WoolManageAction;
-	/** 动作参数（status 无参；checkin 可带 { day?: string } 等）。 */
+	/** 动作参数（checkin 可带 { day?: string } 等；status 可带 { apiKey?: string }——
+	 * 见 woolPassedApiKey，宿主把 models.json 羊毛条目凭据传入，与对话链 options.apiKey 同源）。 */
 	params?: Record<string, unknown>;
+}
+
+/**
+ * status 动作的宿主传参凭据（wool-manage 协议 status params.apiKey）：
+ * 管理会话每次动作新建 pi 进程、扩展进程内凭据缓存恒冷，而 pi 凭据存储（auth.json）
+ * 恒无羊毛条目（taiji 从不写它——pi 扩展 API 无写通道，凭据权威在宿主 models.json）。
+ * 宿主把 models.json 羊毛条目 apiKey 随 status 传入，扩展按对话链同源凭据判定登录态，
+ * 消除「对话可用但账号状态校验恒报失效」的双通道存储分裂。旧扩展忽略未知 params 键
+ * （向后兼容）；新扩展传参缺席时回退各自的进程内/registry 补习链。
+ */
+export function woolPassedApiKey(params: Record<string, unknown> | undefined): string | undefined {
+	if (params === undefined) return undefined;
+	const value = params.apiKey;
+	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 /**

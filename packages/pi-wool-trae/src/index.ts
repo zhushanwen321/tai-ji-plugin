@@ -17,6 +17,7 @@
 
 import {
 	defineWoolExtension,
+	woolPassedApiKey,
 	WOOL_CREDENTIALS_MISSING_MESSAGE,
 	type WoolCredentialAcquireData,
 	type WoolResolvedAuth,
@@ -276,13 +277,21 @@ export default defineWoolExtension({
 			return extras.traeBundle ?? credentials.access;
 		},
 	},
-	manageHandlers: {
-		// 登录态检测语义 = storage.json 存在性 stat，不读内容（D3）。
-		status: async () => ({
-			providerId: "wool-trae",
-			loginDetected: detectTraeLoginState(),
-			tokenExpiresHint: "token lifetime ~5 days; pi refreshes via ExchangeToken before expiry",
-		}),
+		manageHandlers: {
+			// 账号状态（宿主 isWoolAccountStatusView 契约形态：loggedIn/fetchedAt）。
+			// 登录态判定优先级：① 宿主传参 params.apiKey（wool-manage 协议 status 传参 =
+			// models.json 羊毛条目，与对话链同源——管理会话冷启动时 pi auth.json 恒无羊毛
+			// 条目（taiji 不写该文件），不传参只能退本地存在性）；② storage.json 存在性
+			// stat（D3 本地检测语义）。Trae 无独立 userinfo 端点（SOLO 免费对话通道无账号
+			// 信息 API），不在此拉网络——登录态 = 凭据在位事实，额度/昵称增值字段缺席。
+			status: async (params) => {
+				const loggedIn = woolPassedApiKey(params) !== undefined || detectTraeLoginState();
+				return {
+					family: FAMILY_ID,
+					loggedIn,
+					fetchedAt: Date.now(),
+				};
+			},
 		// 回包字段 = 宿主守卫 isWoolDetectData 契约的 detected（wool-manage 协议 data 形状）。
 		detect: async () => ({ detected: detectTraeLoginState() }),
 		// 凭据提取（D2 改道主通道）：storage.json 容器解密一次执行 → JWT 作 apiKey 按

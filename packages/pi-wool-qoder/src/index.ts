@@ -21,8 +21,9 @@ import { join } from "node:path";
 
 import {
 	defineWoolExtension,
-	type WoolStreamImplementation,
 	woolLoggedOutStatus,
+	woolPassedApiKey,
+	type WoolStreamImplementation,
 } from "@zhushanwen/pi-wool-shared";
 
 import { adoptRequestApiKey, extractToAcquireData, login, makeGetApiKey, refreshToken } from "./auth.ts";
@@ -106,9 +107,18 @@ export default function piWoolQoder(pi: ExtensionAPI): void {
 			// wool-shared WoolCredentialAcquireData 契约回传（宿主写 models.json apiKey 条目）。
 			// 提取失败 throw → envelope internal（消息内嵌恢复动作：确认桌面端已登录/改用 PAT）。
 			extract: async () => extractToAcquireData(),
-			// 账号状态拉取（D6 ③：taiji 主动问，无后台推送）。凭据解析失败/无凭据
-			// = 未登录态；上游拉取失败 throw → envelope upstream_error（宿主可重试）。
-			status: async () => {
+			// 账号状态拉取（D6 ③：taiji 主动问，无后台推送）。凭据解析优先级：
+			// ① 宿主传参 params.apiKey（wool-manage 协议 status 传参——models.json 羊毛条目，
+			//    与对话链 options.apiKey 同源；管理会话冷启动 authStore 空 + pi auth.json 恒无
+			//    羊毛条目（taiji 不写该文件），不传参则补习链必空 → 恒 not_logged_in 假失效）；
+			// ② authStore 进程内缓存；③ registry.getApiKeyForProvider 补习（pi 侧 oauth 存储，
+			//    独立 pi 用户 /login 形态）。凭据解析失败/无凭据 = 未登录态；上游拉取失败
+			//    throw → envelope upstream_error（宿主可重试）。
+			status: async (params) => {
+				const passedKey = woolPassedApiKey(params);
+				if (passedKey !== undefined) {
+					await adoptRequestApiKey(authStore, passedKey);
+				}
 				if (authStore.current() === undefined) {
 					// 管理专用会话：经 registry 走一次凭据解析（getApiKey 钩子副作用学习）。
 					const key = await registry?.getApiKeyForProvider(PROVIDER_ID);

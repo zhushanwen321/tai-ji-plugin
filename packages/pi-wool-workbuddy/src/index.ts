@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import {
 	defineWoolExtension,
 	readSnapshotFile,
+	woolPassedApiKey,
 	WoolManageRequestError,
 	type WoolFetchModelsContext,
 	type WoolStreamOutcome,
@@ -115,8 +116,12 @@ const definitionFactory: ExtensionFactory = defineWoolExtension({
 	fetchModels: fetchModelsAdapter,
 	snapshotPath: SNAPSHOT_PATH,
 	manageHandlers: {
-		status: async () => {
-			const accessToken = await resolveAccessToken();
+		status: async (params) => {
+			// 宿主传参优先（wool-manage 协议 status params.apiKey = models.json 羊毛条目，
+			// 与对话链同源）：管理会话冷启动时 registry 解析依赖 pi auth.json（taiji 恒不写，
+			// 羊毛凭据只落 models.json），不传参则恒 not_logged_in 假失效。传参缺席回退
+			// registry 补习链（独立 pi 用户 /login 形态的进程内恢复通道）。
+			const accessToken = woolPassedApiKey(params) ?? (await resolveAccessToken());
 			return workbuddyAccountStatus(accessToken !== undefined, accessToken, undefined);
 		},
 		detect: async () => {

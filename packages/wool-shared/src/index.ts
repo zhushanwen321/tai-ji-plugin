@@ -8,6 +8,7 @@ export {
 	woolManageFail,
 	woolManageOk,
 	woolManageCommandName,
+	woolPassedApiKey,
 	isWoolManageResponse,
 	WOOL_MANAGE_ACTIONS,
 	WOOL_MANAGE_ENTRY_TYPE,

@@ -21,7 +21,7 @@ vi.mock("../auth.ts", () => ({
 }));
 
 import piWoolQoder from "../index.ts";
-import { extractToAcquireData } from "../auth.ts";
+import { adoptRequestApiKey, extractToAcquireData } from "../auth.ts";
 
 type CommandOptions = { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> };
 
@@ -83,5 +83,27 @@ describe("extract 管理动作接线（wool-qoder 命令通道）", () => {
 			expect(response.error.code).toBe("invalid_request");
 			expect(response.error.message).toContain("authorize");
 		}
+	});
+});
+
+describe("status 管理动作（宿主传参凭据通道）", () => {
+	it("params.apiKey 在场 → adoptRequestApiKey 以传入 key 采纳（对话链同源凭据，管理会话冷启动不再恒 not_logged_in）", async () => {
+		const mock = fakePi();
+		piWoolQoder(mock.api);
+		const command = mock.commands.get("wool-qoder");
+		await command!.handler(
+			'{"v":1,"action":"status","params":{"apiKey":"dt-fixture-passed-key-0000"}}',
+			{} as ExtensionCommandContext,
+		);
+		expect(adoptRequestApiKey).toHaveBeenCalledWith(expect.anything(), "dt-fixture-passed-key-0000");
+	});
+
+	it("params 缺席 → adoptRequestApiKey 不被调用（回退 registry 补习链，行为与旧版一致）", async () => {
+		vi.mocked(adoptRequestApiKey).mockClear();
+		const mock = fakePi();
+		piWoolQoder(mock.api);
+		const command = mock.commands.get("wool-qoder");
+		await command!.handler('{"v":1,"action":"status"}', {} as ExtensionCommandContext);
+		expect(adoptRequestApiKey).not.toHaveBeenCalled();
 	});
 });
