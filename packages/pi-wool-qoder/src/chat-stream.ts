@@ -243,7 +243,8 @@ export function createQoderDrive(options: {
 			if (typeof chunk.id === "string" && chunk.id.length > 0) {
 				responseId = chunk.id;
 			}
-			if (chunk.usage !== undefined) {
+			// usage: null 是上游中间 chunk 的合法形态（!== undefined 挡不住 null）
+			if (chunk.usage !== undefined && chunk.usage !== null) {
 				usage.input = chunk.usage.prompt_tokens ?? usage.input;
 				usage.output = chunk.usage.completion_tokens ?? usage.output;
 				usage.cacheRead =

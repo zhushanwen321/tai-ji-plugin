@@ -106,6 +106,21 @@ describe("WorkBuddy OpenAI 形态 SSE → pi 事件流对照", () => {
 		expect(String(request.init.body)).not.toContain(", "); // 紧凑序列化无空白
 	});
 
+	it("usage: null 中间 chunk 不中断流（真机事故回归：typeof null === \"object\" 穿透旧守卫）", async () => {
+		const chunks = [
+			sse({ id: "cmpl-n", choices: [{ delta: { content: "你好" } }] }),
+			sse({ id: "cmpl-n", choices: [], usage: null }),
+			sse({ id: "cmpl-n", choices: [{ delta: {}, finish_reason: "stop" }] }),
+			sse({ id: "cmpl-n", choices: [], usage: { prompt_tokens: 9, completion_tokens: 3 } }),
+			"data: [DONE]\n\n",
+		];
+		const { drive } = driveWith(chunks);
+		const events = await runStreamCase({ model: workbuddyTestModel(), drive });
+		assertConformantSequence(events);
+		expectTextOutcome(events, "你好");
+		expectUsageOutcome(events, { input: 9, output: 3 });
+	});
+
 	it("reasoning_content 增量 → thinking 块", async () => {
 		const chunks = [
 			sse({ id: "c1", choices: [{ delta: { reasoning_content: "先想一想" } }] }),

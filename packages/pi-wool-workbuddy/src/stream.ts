@@ -180,7 +180,8 @@ export async function workbuddyStream(context: WorkbuddyStreamContext): Promise<
 		if (chunk.id !== undefined) {
 			responseId = chunk.id;
 		}
-		if (chunk.usage !== undefined && typeof chunk.usage === "object") {
+		// usage: null 是上游中间 chunk 的合法形态（typeof null === "object"，须显式排除）
+		if (chunk.usage !== undefined && chunk.usage !== null) {
 			const prompt = chunk.usage.prompt_tokens;
 			const completion = chunk.usage.completion_tokens;
 			usage = {

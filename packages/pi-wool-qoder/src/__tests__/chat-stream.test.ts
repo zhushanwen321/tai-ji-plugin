@@ -118,6 +118,20 @@ describe("文本流（含 usage 记账与信封字符串状态形态）", () => 
 		expect(done?.type === "done" && done.message.responseId).toBe("chatcmpl-f1");
 	});
 
+	it("usage: null 中间 chunk 不中断流（WorkBuddy 真机事故同款守卫洞回归）", async () => {
+		const chunks = [
+			envelope({ id: "chatcmpl-n1", choices: [{ index: 0, delta: { content: "你好" } }] }),
+			envelope({ id: "chatcmpl-n1", choices: [], usage: null }),
+			envelope({ id: "chatcmpl-n1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+			envelope({ id: "chatcmpl-n1", choices: [], usage: { prompt_tokens: 8, completion_tokens: 2 } }),
+			DONE_FRAME,
+		];
+		const events = await runQoderCase({ fetchImpl: mockSseFetch(chunks) });
+		assertConformantSequence(events);
+		expectTextOutcome(events, "你好");
+		expectUsageOutcome(events, { input: 8, output: 2 });
+	});
+
 	it("reasoning_content → thinking 事件（reasoning 模型的双通道内容）", async () => {
 		const chunks = [
 			envelope({ choices: [{ index: 0, delta: { reasoning_content: "先想一下" } }] }),
