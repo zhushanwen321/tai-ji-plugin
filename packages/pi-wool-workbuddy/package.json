@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-wool-workbuddy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Wool provider extension for WorkBuddy (Tencent) — session header family + client fingerprint, OAuth flow with authorization-window-only local callback listener, check-in execution.",
   "type": "module",
   "main": "index.ts",

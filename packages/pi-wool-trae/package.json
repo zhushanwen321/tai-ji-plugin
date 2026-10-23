@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-wool-trae",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Wool provider extension for Trae (ByteDance) — custom SSE + Cloud-IDE-JWT + fixed header family, storage.json container credential extraction (SOLO free-chat channel).",
   "type": "module",
   "main": "index.ts",

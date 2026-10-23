@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-wool-shared",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared protocol-agnostic foundation for wool provider extensions (@zhushanwen/pi-wool-*) — provider scaffolding (registerProvider/streamSimple/oauth wiring), manage-command protocol (taiji->extension), account status schema, model catalog store (event-boundary replace, no TTL, in-package snapshot fallback), SSE parsing, and a fixture-driven streamSimple conformance test harness. Shared library, not a Pi extension.",
   "type": "module",
   "main": "src/index.ts",
