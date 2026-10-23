@@ -49,8 +49,17 @@ const LARGE_PROBE_BYTES = 200 * 1024 * 1024;
 const token = process.env.GITCODE_TOKEN;
 const repo = process.env.GITCODE_REPO;
 
+/**
+ * 错误文案脱敏：git 子进程失败时原生 message 内嵌完整 push URL（含认证段
+ * `https://<user>:<token>@`），直接打印会把令牌泄漏进终端/会话记录。所有错误
+ * 输出收口（die / record 的 detail）必须过本函数。
+ */
+function redactSecrets(s) {
+  return String(s).replace(/(https:\/\/[^:/\s@]+:)[^@\s]+(@)/g, '$1***$2');
+}
+
 function die(msg) {
-  console.error(`\n[FAIL] ${msg}`);
+  console.error(`\n[FAIL] ${redactSecrets(msg)}`);
   process.exit(1);
 }
 
@@ -488,7 +497,7 @@ async function runProbe({ large, skipRepo }) {
   const results = [];
   const record = (name, ok, detail) => {
     results.push({ name, ok, detail });
-    console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` —— ${detail}` : ''}`);
+    console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` —— ${redactSecrets(detail)}` : ''}`);
   };
 
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
