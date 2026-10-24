@@ -24,9 +24,12 @@
     ],
     "capabilities": [
       "network.http",
-      "crypto"
+      "crypto",
+      "fs.read-user-data"
     ],
-    "readPaths": [],
+    "readPaths": [
+      ".taiji/plugins/zhushanwen__plugin-wool-workbuddy"
+    ],
     "namespace": "wool-workbuddy"
   },
   "scripts": {

@@ -1,4 +1,4 @@
-// catalog.ts — get_detail_param → pi 模型目录（D4；consumption_rate 透传）。
+// catalog.ts — get_detail_param → pi 模型目录（consumption_rate 透传）。
 //
 // 上游形态（2026-10-21 实测）：config_info_list 条目关键字段：
 // - config_name（pi 模型 id）、display_config.display_name（显示名）、
@@ -15,9 +15,10 @@ import { CATALOG_ENDPOINT, SOLO_FUNCTION, TRAE_GATEWAY_CN, buildCommonHeaders, t
 
 /** Trae 模型目录条目（pi Model 结构超集：+ consumptionRate 透传字段）。
  * pi 装载目录只按 type 过滤不剥额外字段（pi-ai models.js withKnownModelTypes 实装
- * 核实），额外字段经 persist（models-store.json JSON 往返）与包内快照全程保留。 */
+ * 核实），额外字段经 models.json 条目的 JSON 往返全程保留（providers.write 写入，
+ * pi composer 按条目构造目录）。 */
 export type TraeModel = Model<Api> & {
-	/** 消耗系数（上游 display_contact_config.consumption_rate，仅透传展示——设计 D4 增量项）。 */
+	/** 消耗系数（上游 display_contact_config.consumption_rate，仅透传展示）。 */
 	consumptionRate?: { enable: boolean; rate: number };
 };
 
@@ -134,7 +135,7 @@ function isUserVisibleChatEntry(entry: RawCatalogEntry): boolean {
 	return true;
 }
 
-/** 上游条目 → pi 完整模型对象（provider/baseUrl 已补全——与 scaffold persist 契约同型）。 */
+/** 上游条目 → pi 完整模型对象（provider/baseUrl 已补全）。 */
 function toTraeModel(entry: RawCatalogEntry): TraeModel {
 	const detail = entry.model_detail_list?.[0];
 	const contextWindow = entry.context_window_tokens?.dev ?? DEFAULT_CONTEXT_WINDOW;
@@ -161,7 +162,7 @@ function toTraeModel(entry: RawCatalogEntry): TraeModel {
 	return model;
 }
 
-/** 目录拉取失败（网络 / 非 200 / 形状不符——D4 快照兜底由调用方承接）。 */
+/** 目录拉取失败（网络 / 非 200 / 形状不符；该次 providers.write 目录写入不发生）。 */
 export class TraeCatalogError extends Error {
 	constructor(message: string) {
 		super(message);

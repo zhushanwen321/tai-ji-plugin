@@ -49,8 +49,16 @@ describe("@zhushanwen/plugin-wool-workbuddy manifest", () => {
 		expect(pkg.taijiPlugin.capabilities).toContain("network.http");
 	});
 
-	it("OAuth 家族不声明 fs.read-user-data（不读本机凭据文件）", () => {
-		expect(pkg.taijiPlugin.capabilities).not.toContain("fs.read-user-data");
+	it("声明 fs.read-user-data + 自身安装目录 readPath（refreshCatalog 读包内快照；不指向凭据文件）", () => {
+		expect(pkg.taijiPlugin.capabilities).toContain("fs.read-user-data");
+		// readPaths 为家目录相对路径；目录名 = 包名 scope__name 推导（宿主安装器命名）。
+		// 数据根经 TAIJI_AGENT_DATA_DIR 迁离 ~/.taiji 时该声明失效为无可读路径（fail-closed），
+		// 快照读取按文件缺失同型回空表。
+		expect(pkg.taijiPlugin.readPaths).toEqual([".taiji/plugins/zhushanwen__plugin-wool-workbuddy"]);
+	});
+
+	it("不声明 process.spawn（OAuth 家族不读钥匙串/本机凭据文件）", () => {
+		expect(pkg.taijiPlugin.capabilities).not.toContain("process.spawn");
 	});
 
 	it("写入的 providerId 落在命名空间内（ns 或 ns- 前缀）", () => {

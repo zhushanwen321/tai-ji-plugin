@@ -1,9 +1,11 @@
-// models.ts — refreshModels 实装：账号级动态模型目录拉取 + 快照元数据匹配。
+// models.ts — 账号级动态模型目录拉取 + 快照元数据匹配（插件 refreshCatalog 的带网
+// 通道，拉取结果经 providers.write 落 models.json 条目）。
 //
 // 上游形态（hub wb_proxy.fetch_endpoint_models 实读）：GET /v2/enterprises/personal/models
 // 只返回 id 清单（data.agents[].models[] 字符串数组去重），不含元数据——元数据表
 // 由包内快照承载（snapshots/workbuddy.json，17 模型账号级清单），动态 id 不在快照
-// 中时按保守缺省构造。快照兜底与持久化由 wool-shared scaffold 承担（D4）。
+// 中时按保守缺省构造。快照 = 构建期随包分发的只读本地数据（读不到回空表，不阻断
+// 拉取链路）；无 persist 写回，目录唯一数据源 = models.json 羊毛条目。
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -120,8 +122,8 @@ export type FetchModelsOptions = {
 };
 
 /**
- * 带网拉模型目录（fetchModels 契约：返回完整 Model 对象）。
- * 上游 401/网络失败直接 throw——scaffold 侧无缓存命中语义由 store 承担。
+ * 带网拉模型目录（返回完整 Model 对象，供 refreshCatalog 经 providers.write 写入
+ * models.json 条目）。上游 401/网络失败直接 throw（该次目录写入不发生）。
  */
 export async function fetchWorkbuddyModels(options: FetchModelsOptions): Promise<Model<Api>[]> {
 	const { credential, signal, snapshot, realm } = options;

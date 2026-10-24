@@ -1,4 +1,4 @@
-// models-fetch.ts — model/list 拉取 → pi 模型目录（设计 D4；带网阶段实装）。
+// models-fetch.ts — model/list 拉取 → pi 模型目录（插件 refreshCatalog 的带网拉取层）。
 //
 // 上游请求形态（P5 实测裁决，2026-10-21）：**GET 无 body，签名按空 body 计算**
 // （服务端按 body="" 校验 GET 签名）——hub 的 Python 形态是 GET+body（urllib 专属
@@ -6,9 +6,10 @@
 // supported）、GET 无 body 按 "{}" 签名 403（Signature invalid）、GET 无 body 按
 // 空串签名 200（真实目录返回）。签名 method 无关（hub：签名只覆盖 path 与 body）。
 //
-// 目录条目过滤（hub is_chat_model）：补全/图像类 key 不进对话模型目录。快照兜底 =
-// 包内 snapshots/qoder.json（scaffold 的 restore 回落链），本模块只管带网拉取与
-// pi Model 构造。
+// 目录条目过滤（hub is_chat_model）：补全/图像类 key 不进对话模型目录。本模块只管
+// 带网拉取与 pi Model 构造：无本地快照文件兜底（拉取失败 = 该次 providers.write 目录
+// 写入不发生），元数据反查的兜底 = constants 的 SNAPSHOT_FALLBACK_MODELS 内置清单
+// （仅 chat-body 的 model_config 反查用，不进目录）。
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 
@@ -51,7 +52,7 @@ const DEFAULT_MAX_TOKENS = 32768;
 /** 错误消息内上游响应摘录的最大长度（与 chat-stream 同口径）。 */
 const ERROR_DETAIL_LENGTH = 300;
 
-/** 上游条目 → pi chat 模型（persist/内存/快照三处同型；scaffold fetchModels 契约）。 */
+/** 上游条目 → pi chat 模型（api/provider/baseUrl 固化为 wool-qoder 网关）。 */
 export function toPiModel(entry: UpstreamCatalogEntry): Model<Api> {
 	const maxInput = typeof entry.max_input_tokens === "number" && entry.max_input_tokens > 0 ? entry.max_input_tokens : DEFAULT_CONTEXT_WINDOW;
 	const displayName = entry.display_name ?? entry.key;

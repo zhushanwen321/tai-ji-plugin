@@ -1,4 +1,4 @@
-// model-catalog.ts — 包内快照承载（设计 D4 的快照层在收敛后的残留职责）。
+// model-catalog.ts — 包内快照承载（workbuddy 元数据表：上游只回 id 清单，元数据随包分发）。
 //
 // 收敛说明（D6/D7——模型目录唯一数据源 = models.json 羊毛条目的 models 数组）：目录
 // 缓存 store 与 persist 写入随 scaffold 的 refreshModels 退役删除；本文件只保留包内
