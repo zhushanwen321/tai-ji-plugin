@@ -22,9 +22,9 @@ import {
 	runStreamCase,
 } from "@zhushanwen/pi-wool-shared/testing";
 
-import { QoderAuthStore } from "../credentials.ts";
+import { QoderAuthStore, type QoderModelMeta } from "@zhushanwen/pi-wool-shared/qoder";
 import { createQoderDrive } from "../chat-stream.ts";
-import type { QoderModelMeta } from "../chat-body.ts";
+
 
 /** 测试模型（与包内快照 qfmodel 同形）。 */
 const TEST_MODEL: Model<Api> = {

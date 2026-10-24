@@ -6,9 +6,8 @@
 import type { Api, Message, Tool } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
-import { buildQoderBody, flattenMessages, lastUserPrompt, toUpstreamTools, useStructuredToolHistory, type QoderModelMeta } from "../chat-body.ts";
-import { fetchModelCatalog, isChatModelKey, toPiModel } from "../models-fetch.ts";
-import { QoderAuthStore } from "../credentials.ts";
+import { buildQoderBody, flattenMessages, lastUserPrompt, toUpstreamTools, useStructuredToolHistory } from "../chat-body.ts";
+import { fetchModelCatalog, isChatModelKey, lookupModelMeta, QoderAuthStore, toPiModel, type QoderModelMeta } from "@zhushanwen/pi-wool-shared/qoder";
 
 const META: QoderModelMeta = { key: "qfmodel", displayName: "Qwen3.8-Flash", isVl: false, isReasoning: true, maxInputTokens: 180000 };
 
@@ -193,7 +192,6 @@ describe("fetchModelCatalog（带网拉取）", () => {
 		expect(captured[0]?.method).toBe("GET");
 		expect(captured[0]?.body).toBeUndefined();
 		// 元数据缓存填充（chat-stream 反查通道）。
-		const { lookupModelMeta } = await import("../models-fetch.ts");
 		expect(lookupModelMeta("qfmodel")?.displayName).toBe("Qwen3.8-Flash");
 	});
 

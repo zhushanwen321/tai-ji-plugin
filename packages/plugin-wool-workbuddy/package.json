@@ -1,0 +1,48 @@
+{
+  "name": "@zhushanwen/plugin-wool-workbuddy",
+  "version": "0.1.0",
+  "description": "taiji plugin for the WorkBuddy (Tencent) wool provider family — OAuth authorization, account/check-in status, daily check-in, model catalog refresh.",
+  "type": "module",
+  "displayName": "WorkBuddy",
+  "main": "src/index.ts",
+  "keywords": [
+    "taiji-plugin",
+    "taiji",
+    "wool",
+    "workbuddy",
+    "provider"
+  ],
+  "license": "MIT",
+  "files": [
+    "src/"
+  ],
+  "taijiPlugin": {
+    "manifestVersion": 1,
+    "main": "src/index.ts",
+    "activationEvents": [
+      "onStartupFinished"
+    ],
+    "capabilities": [
+      "network.http",
+      "crypto"
+    ],
+    "readPaths": [],
+    "namespace": "wool-workbuddy"
+  },
+  "scripts": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@zhushanwen/pi-wool-shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhushanwen321/tai-ji-plugin.git",
+    "directory": "packages/plugin-wool-workbuddy"
+  }
+}

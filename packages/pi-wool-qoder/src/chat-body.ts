@@ -13,22 +13,17 @@ import { randomUUID } from "node:crypto";
 
 import type { Message, Tool } from "@earendil-works/pi-ai";
 
-import { DEFAULT_CONTEXT_WINDOW, STRUCTURED_TOOL_HISTORY_PREFIXES } from "./constants.ts";
-import { compactJson } from "./encode.ts";
+import {
+	compactJson,
+	DEFAULT_CONTEXT_WINDOW,
+	STRUCTURED_TOOL_HISTORY_PREFIXES,
+	type QoderModelMeta,
+} from "@zhushanwen/pi-wool-shared/qoder";
 
 const TOOL_RESULT_MARKER = "[工具结果";
 const TOOL_RESULT_CLOSE = "[工具结果结束]";
 /** business.name 会话名取 prompt 前 30 字符（hub build_qoder_body 同款截断）。 */
 const BUSINESS_NAME_PROMPT_CHARS = 30;
-
-/** 模型目录元数据（model/list 条目子集；model_config 与结构化判定用）。 */
-export type QoderModelMeta = {
-	key: string;
-	displayName: string;
-	isVl: boolean;
-	isReasoning: boolean;
-	maxInputTokens: number;
-};
 
 /** 文本内容提取：string 直取；块数组拼 text 块（image/thinking 块不进文本通道）。 */
 function messageText(content: string | { type: string; text?: string }[]): string {

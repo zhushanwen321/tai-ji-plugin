@@ -10,10 +10,10 @@ import type { WoolStreamDriverContext, WoolStreamOutcome } from "@zhushanwen/pi-
 import { parseSseStream, WoolStreamAdapterError } from "@zhushanwen/pi-wool-shared";
 import type { JsonObject, Message, Tool } from "@earendil-works/pi-ai";
 
-import { buildQoderBody, lastUserPrompt, type QoderModelMeta } from "./chat-body.ts";
-import { CHAT_PATH, GATEWAY_BASE_URL } from "./constants.ts";
-import { qoderEncode } from "./encode.ts";
-import type { QoderAuthStore } from "./credentials.ts";
+import type { QoderAuthStore, QoderModelMeta } from "@zhushanwen/pi-wool-shared/qoder";
+import { CHAT_PATH, GATEWAY_BASE_URL, qoderEncode } from "@zhushanwen/pi-wool-shared/qoder";
+
+import { buildQoderBody, lastUserPrompt } from "./chat-body.ts";
 
 /** 信封/HTTP 层语义常量（错误分类与截断口径）。 */
 const HTTP_OK = 200;

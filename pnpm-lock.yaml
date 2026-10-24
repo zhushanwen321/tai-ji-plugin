@@ -81,6 +81,45 @@ importers:
         specifier: ^4.1.8
         version: 4.1.12(@types/node@26.6.5)(@vitest/coverage-v8@4.1.12)(vite@8.3.5(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.0))
 
+  packages/plugin-wool-qoder:
+    dependencies:
+      '@zhushanwen/pi-wool-shared':
+        specifier: workspace:*
+        version: link:../wool-shared
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.12(vitest@4.1.12)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.12(@types/node@26.6.5)(@vitest/coverage-v8@4.1.12)(vite@8.3.5(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/plugin-wool-trae:
+    dependencies:
+      '@zhushanwen/pi-wool-shared':
+        specifier: workspace:*
+        version: link:../wool-shared
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.12(vitest@4.1.12)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.12(@types/node@26.6.5)(@vitest/coverage-v8@4.1.12)(vite@8.3.5(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/plugin-wool-workbuddy:
+    dependencies:
+      '@zhushanwen/pi-wool-shared':
+        specifier: workspace:*
+        version: link:../wool-shared
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.12(vitest@4.1.12)
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.12(@types/node@26.6.5)(@vitest/coverage-v8@4.1.12)(vite@8.3.5(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.0))
+
   packages/wool-shared:
     devDependencies:
       '@earendil-works/pi-ai':

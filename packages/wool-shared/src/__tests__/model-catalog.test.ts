@@ -1,12 +1,17 @@
-// model-catalog.test.ts — D4 目录缓存语义：事件边界替换、缓存命中判定、快照兜底、persist entry。
+// model-catalog.test.ts — 包内快照承载（D6/D7 收敛后：模型目录唯一数据源 = models.json
+// 条目；本模块只保留快照形状守卫与读取，WorkBuddy 元数据表消费）。
+//
+// 目录缓存 store / persist entry / 上游兜底语义随 scaffold 的 refreshModels 退役删除
+// （D7 单源：上游目录的拉取与写回只发生在插件侧）。
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AnyModel } from "@earendil-works/pi-ai";
+import { afterAll, describe, expect, it } from "vitest";
 
-import { createModelCatalogStore, readSnapshotFile, toPersistEntry, type WoolCatalogSnapshot } from "../model-catalog.ts";
+import { isValidSnapshot, readSnapshotFile } from "../model-catalog.ts";
 
 function chatModel(id: string) {
 	return {
@@ -24,99 +29,80 @@ function chatModel(id: string) {
 	};
 }
 
-describe("createModelCatalogStore（D4 语义）", () => {
-	it("初始为空；restore(persist 目录) 恢复为当前清单", () => {
-		const store = createModelCatalogStore();
-		expect(store.current()).toBeUndefined();
-		expect(store.shouldFetchUpstream(false)).toBe(true);
+const tmpDir = mkdtempSync(join(tmpdir(), "wool-snapshot-"));
 
-		store.restore({ models: [chatModel("m1")] });
-		expect(store.current()?.map((model) => model.id)).toEqual(["m1"]);
-		expect(store.lastSource()).toBe("restored");
+afterAll(() => {
+	rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+});
+
+function writeSnapshot(name: string, content: string): string {
+	const path = join(tmpDir, name);
+	writeFileSync(path, content);
+	return path;
+}
+
+describe("isValidSnapshot（读侧不信任外部格式）", () => {
+	it("合法形状通过（models 为带 id/name/api 的对象数组）", () => {
+		expect(isValidSnapshot({ family: "workbuddy", fetchedAt: 1, models: [chatModel("m1")] })).toBe(true);
 	});
 
-	it("缓存命中：有清单且非 force → 不发上游；force=true 或空清单 → 发", () => {
-		const store = createModelCatalogStore();
-		expect(store.shouldFetchUpstream(undefined)).toBe(true);
-		store.restore({ models: [chatModel("m1")] });
-		expect(store.shouldFetchUpstream(undefined)).toBe(false);
-		expect(store.shouldFetchUpstream(false)).toBe(false);
-		// force = taiji 显式刷新 / 报错触发路径（D4 两条强制路径）
-		expect(store.shouldFetchUpstream(true)).toBe(true);
+	it("非对象 / 缺 models / models 非数组 → false", () => {
+		expect(isValidSnapshot(undefined)).toBe(false);
+		expect(isValidSnapshot(null)).toBe(false);
+		expect(isValidSnapshot("snapshot")).toBe(false);
+		expect(isValidSnapshot({})).toBe(false);
+		expect(isValidSnapshot({ models: "m1" })).toBe(false);
 	});
 
-	it("restore 无 persist 且无快照 → 空清单（首装离线形态）", () => {
-		const store = createModelCatalogStore();
-		store.restore(undefined);
-		expect(store.current()).toEqual([]);
-		expect(store.lastSource()).toBe("empty");
-	});
-
-	it("restore 无 persist 且有快照 → 快照兜底", () => {
-		const store = createModelCatalogStore({
-			loadSnapshot: () => ({ family: "qoder", fetchedAt: 1, models: [chatModel("snap-1")] }),
-		});
-		store.restore(undefined);
-		expect(store.current()?.map((model) => model.id)).toEqual(["snap-1"]);
-		expect(store.lastSource()).toBe("snapshot");
-	});
-
-	it("快照形状非法 → 记录 onSnapshotInvalid，清单置空不炸", () => {
-		const invalidReasons: string[] = [];
-		const store = createModelCatalogStore({
-			loadSnapshot: () => ({ family: "qoder", fetchedAt: 1, models: [{ nope: true }] as unknown as WoolCatalogSnapshot["models"] }),
-			onSnapshotInvalid: (reason) => invalidReasons.push(reason),
-		});
-		store.restore(undefined);
-		expect(store.current()).toEqual([]);
-		expect(invalidReasons).toHaveLength(1);
-	});
-
-	it("replace 为唯一写入口（事件边界替换语义）；无 TTL 判定字段参与逻辑", () => {
-		const store = createModelCatalogStore();
-		store.restore({ models: [chatModel("m1")] });
-		store.replace([chatModel("m2")], "upstream");
-		expect(store.current()?.map((model) => model.id)).toEqual(["m2"]);
-		expect(store.lastSource()).toBe("upstream");
+	it("条目缺 id/name/api 任一 → false", () => {
+		expect(isValidSnapshot({ models: [{ id: "m1", name: "M1" }] })).toBe(false);
+		expect(isValidSnapshot({ models: [{ id: "m1", api: "wool-test" }] })).toBe(false);
+		expect(isValidSnapshot({ models: [{ name: "M1", api: "wool-test" }] })).toBe(false);
+		expect(isValidSnapshot({ models: [null] })).toBe(false);
 	});
 });
 
-describe("readSnapshotFile（包内快照读入）", () => {
-	let dir: string;
-
-	beforeEach(() => {
-		dir = mkdtempSync(join(tmpdir(), "wool-shared-snapshot-"));
-	});
-
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
-	});
-
-	it("读入合法快照", () => {
-		const path = join(dir, "snapshot.json");
-		writeFileSync(path, JSON.stringify({ family: "trae", fetchedAt: 42, models: [chatModel("t1")] }));
+describe("readSnapshotFile（文件缺失/损坏不炸正常拉取链路）", () => {
+	it("合法 JSON 快照 → 解析结果", () => {
+		const path = writeSnapshot("valid.json", JSON.stringify({ family: "workbuddy", fetchedAt: 1, models: [chatModel("m1")] }));
 		const snapshot = readSnapshotFile(path);
-		expect(snapshot?.family).toBe("trae");
-		expect(snapshot?.models.map((model) => model.id)).toEqual(["t1"]);
+		expect(snapshot?.models.map((model) => model.id)).toEqual(["m1"]);
 	});
 
-	it("文件缺失 / 坏 JSON / 形状非法 → undefined（兜底路径静默降级）", () => {
-		expect(readSnapshotFile(join(dir, "missing.json"))).toBeUndefined();
+	it("文件缺失 → undefined", () => {
+		expect(readSnapshotFile(join(tmpDir, "missing.json"))).toBeUndefined();
+	});
 
-		const badPath = join(dir, "bad.json");
-		writeFileSync(badPath, "{not json");
-		expect(readSnapshotFile(badPath)).toBeUndefined();
-
-		const shapePath = join(dir, "shape.json");
-		writeFileSync(shapePath, JSON.stringify({ family: "x", models: "not-array" }));
-		expect(readSnapshotFile(shapePath)).toBeUndefined();
+	it("非 JSON / 形状非法 → undefined", () => {
+		expect(readSnapshotFile(writeSnapshot("broken.json", "{not json"))).toBeUndefined();
+		expect(readSnapshotFile(writeSnapshot("invalid-shape.json", JSON.stringify({ models: [{ id: "m1" }] })))).toBeUndefined();
 	});
 });
 
-describe("toPersistEntry", () => {
-	it("persist 只装目录本体 + 采集时点（无过期语义字段）", () => {
-		const entry = toPersistEntry([chatModel("m1")]);
-		expect(Object.keys(entry).sort()).toEqual(["checkedAt", "models"]);
-		expect(entry.models.map((model) => (model as { id: string }).id)).toEqual(["m1"]);
+describe("WorkBuddy 包内快照（元数据表实物，插件与 pi 扩展同源数据）", () => {
+	const snapshotPath = join(import.meta.dirname, "..", "workbuddy", "snapshots", "workbuddy.json");
+
+	it("文件可读、形状合法、17 模型含 hy3", () => {
+		const snapshot = readSnapshotFile(snapshotPath);
+		expect(snapshot).toBeDefined();
+		expect(snapshot?.models.length).toBe(17);
+		const ids = snapshot?.models.map((model) => model.id);
+		expect(ids).toContain("hy3");
+		expect(ids).toContain("deepseek-v4.1-flash");
+		expect(ids).toContain("kimi-k2.8-preview");
+	});
+
+	it("快照模型为完整 chat Model（provider/api/baseUrl 齐备）", () => {
+		const snapshot = readSnapshotFile(snapshotPath) as { models: AnyModel[] };
+		for (const model of snapshot.models) {
+			expect(model.provider).toBe("wool-workbuddy");
+			expect(model.api).toBe("wool-workbuddy");
+			expect(typeof model.contextWindow).toBe("number");
+			expect(typeof model.maxTokens).toBe("number");
+			expect(Array.isArray(model.input)).toBe(true);
+		}
+		const hy3 = snapshot.models.find((model) => model.id === "hy3");
+		expect(hy3?.reasoning).toBe(true);
+		expect(hy3?.input).toContain("image");
 	});
 });

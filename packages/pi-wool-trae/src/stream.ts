@@ -26,8 +26,8 @@ import {
 	buildStreamHeaders,
 	describeUpstreamError,
 	type TraeAuthInputs,
-} from "./protocol.ts";
-import type { TraeFetch } from "./catalog.ts";
+	type TraeFetch,
+} from "@zhushanwen/pi-wool-shared/trae";
 import type { WoolStreamDriverContext, WoolStreamOutcome } from "@zhushanwen/pi-wool-shared";
 
 /** 上游 token_usage 事件载荷。 */

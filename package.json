@@ -2,13 +2,13 @@
   "name": "tai-ji-plugin",
   "private": true,
   "version": "0.1.0",
-  "description": "taiji plugin packages (pi provider extensions) \u2014 independent repo, npm release line decoupled from the taiji app version.",
+  "description": "taiji plugin packages (pi provider extensions) — independent repo, npm release line decoupled from the taiji app version.",
   "license": "MIT",
   "packageManager": "pnpm@10.27.0",
   "scripts": {
     "typecheck": "npx tsc --noEmit",
     "lint": "npx eslint packages/ test-guard/",
-    "test": "pnpm -r --filter \"@zhushanwen/pi-*\" --workspace-concurrency=1 test",
+    "test": "pnpm -r --filter \"@zhushanwen/pi-*\" --filter \"@zhushanwen/plugin-*\" --workspace-concurrency=1 test",
     "changeset-version": "changeset version",
     "changeset-publish": "changeset publish"
   },

@@ -1,19 +1,18 @@
-// index.test.ts — 扩展装配层测试（替换 u-foundation 的占位测试文件）。
+// index.test.ts — pi-wool-qoder 扩展装配面（瘦身后形态，设计 D6/D7 验收条款④）。
 //
-// 覆盖：default export 的 ExtensionFactory 形态、provider 注册词表、oauth/管理命令/
-// refreshModels 装配面、包内快照兜底的可读性。pi 契约深度行为由 wool-shared 的
-// scaffold 测试与 P5 真机探针承接。
+// 断言：只注册 provider（api/baseUrl/streamSimple/oauth），不声明 models、不定义
+// refreshModels（模型目录唯一数据源 = models.json 条目）、不注册管理命令、激活期零
+// 网络请求、源码不含上游拉取/宿主目录缓存写入残留。
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { readSnapshotFile } from "@zhushanwen/pi-wool-shared";
+import { describe, expect, it, vi } from "vitest";
 
 import piWoolQoder, { FAMILY_ID, PROVIDER_ID } from "../index.ts";
 
-/** ExtensionAPI 最小替身（装配面断言用；不跑真实 pi 生命周期）。 */
+/** ExtensionAPI 最小替身（装配面断言；不跑真实 pi 生命周期）。 */
 function fakePi() {
-	const providers: { name: string; config: Record<string, unknown> }[] = [];
+	const providers: Array<{ name: string; config: Record<string, unknown> }> = [];
 	const commands: string[] = [];
 	const events: string[] = [];
 	return {
@@ -30,63 +29,61 @@ function fakePi() {
 			registerCommand: (name: string) => {
 				commands.push(name);
 			},
-			appendEntry: () => {},
 		},
 	};
 }
 
-describe("扩展装配", () => {
+describe("pi-wool-qoder 装配（瘦身形态）", () => {
 	it("词表：family=qoder / provider=wool-qoder", () => {
 		expect(FAMILY_ID).toBe("qoder");
 		expect(PROVIDER_ID).toBe("wool-qoder");
 	});
 
-	it("default export 为 ExtensionFactory：注册 wool-qoder provider + wool-qoder 管理命令 + session_start 监听", () => {
-		expect(typeof piWoolQoder).toBe("function");
+	it("只注册 provider：api/baseUrl/streamSimple/oauth 三钩子在位", () => {
 		const pi = fakePi();
 		piWoolQoder(pi.api as never);
-		expect(pi.providers.length).toBe(1);
+		expect(pi.providers).toHaveLength(1);
 		const { name, config } = pi.providers[0]!;
 		expect(name).toBe("wool-qoder");
-		// pi composer 硬校验项（P6 发现）：api + baseUrl。
 		expect(config.api).toBe("wool-qoder");
 		expect(config.baseUrl).toContain("gateway.qoder.com.cn");
-		// oauth 三钩子与 refreshModels（动态目录 provider）装配在位。
-		expect(typeof (config.oauth as Record<string, unknown>)?.login).toBe("function");
-		expect(typeof (config.oauth as Record<string, unknown>)?.refreshToken).toBe("function");
-		expect(typeof (config.oauth as Record<string, unknown>)?.getApiKey).toBe("function");
-		expect(typeof config.refreshModels).toBe("function");
+		const oauth = config.oauth as Record<string, unknown>;
+		expect(typeof oauth.login).toBe("function");
+		expect(typeof oauth.refreshToken).toBe("function");
+		expect(typeof oauth.getApiKey).toBe("function");
 		expect(typeof config.streamSimple).toBe("function");
-		// 管理命令（taiji 管理专用会话通道）。
-		expect(pi.commands).toContain("wool-qoder");
-		// 两个 session_start listener（scaffold 凭据解析器 + 管理通道 registry 捕获）。
-		expect(pi.events.filter((event) => event === "session_start").length).toBe(2);
 	});
 
-	it("workspace 依赖 @zhushanwen/pi-wool-shared 可解析", async () => {
-		const shared = await import("@zhushanwen/pi-wool-shared");
-		expect(typeof shared.createAssistantStream).toBe("function");
-		expect(typeof shared.registerWoolManageCommand).toBe("function");
+	it("不声明 models（undefined）：目录来自 models.json 条目，声明空表会替换成 0 模型", () => {
+		const pi = fakePi();
+		piWoolQoder(pi.api as never);
+		expect(pi.providers[0]!.config.models).toBeUndefined();
 	});
-});
 
-describe("包内快照兜底（D4 第三层：首装离线回落）", () => {
-	it("snapshots/qoder.json 可解析且含测试模型 Qwen3.8-Flash", () => {
-		const snapshot = readSnapshotFile(join(import.meta.dirname, "..", "..", "snapshots", "qoder.json"));
-		expect(snapshot).toBeDefined();
-		expect(snapshot?.family).toBe("qoder");
-		const ids = snapshot?.models.map((model) => model.id) ?? [];
-		expect(ids).toContain("qfmodel");
-		// 三处同型：快照模型必须带 provider/api（pi fetchModels 契约）。
-		for (const model of snapshot?.models ?? []) {
-			expect(model.provider).toBe("wool-qoder");
-			expect(model.api).toBe("wool-qoder");
+	it("不定义 refreshModels（零上游拉取、零宿主目录缓存写入）", () => {
+		const pi = fakePi();
+		piWoolQoder(pi.api as never);
+		expect(pi.providers[0]!.config.refreshModels).toBeUndefined();
+	});
+
+	it("不注册管理命令（管理动作已迁 plugin-wool-qoder）", () => {
+		const pi = fakePi();
+		piWoolQoder(pi.api as never);
+		expect(pi.commands).toHaveLength(0);
+	});
+
+	it("激活期零网络请求（fetch 不被调用）", () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const pi = fakePi();
+		piWoolQoder(pi.api as never);
+		expect(fetchSpy).not.toHaveBeenCalled();
+		fetchSpy.mockRestore();
+	});
+
+	it("源码不含上游目录拉取/宿主目录缓存写入残留", () => {
+		const source = readFileSync(join(import.meta.dirname, "..", "index.ts"), "utf8");
+		for (const banned of ["refreshModels:", "fetchModels:", "fetchModels(", "fetchModelCatalog(", "snapshotPath:", "persist:", "manageHandlers:", "registerCommand("]) {
+			expect(source.includes(banned), `index.ts 不应再含 ${banned}`).toBe(false);
 		}
-	});
-
-	it("快照文件被 package.json files 白名单覆盖（发布产物自包含）", () => {
-		const packageJson = JSON.parse(readFileSync(join(import.meta.dirname, "..", "..", "package.json"), "utf8")) as { files: string[] };
-		// files 覆盖 src/** 与 index.ts；snapshots 需显式在列（快照兜底资产不进发布件 = 静默失效）。
-		expect(packageJson.files.some((pattern) => pattern.includes("snapshots"))).toBe(true);
 	});
 });

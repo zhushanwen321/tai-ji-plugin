@@ -1,8 +1,9 @@
-// scaffold.test.ts — defineWoolExtension 接线：refreshModels D4 语义 + persist publish +
-// streamSimple 骨架分发 + 管理命令注册 + 凭据解析捕获。
+// scaffold.test.ts — defineWoolExtension 接线（瘦身后形态，设计 D6/D7）：
+// - provider 注册不声明 models（目录唯一数据源 = models.json 条目；声明会替换为空表）；
+// - 不定义 refreshModels、不注册管理命令（管理动作已迁 plugin-wool-<family>）；
+// - streamSimple 骨架分发与凭据双通道优先级。
 
 import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import type { ModelsPublication, RefreshModelsContext } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
 import { defineWoolExtension, type WoolFamilyExtensionDefinition } from "../scaffold.ts";
@@ -10,34 +11,28 @@ import { collectAssistantEvents, expectErrorOutcome, expectTextOutcome, assertCo
 
 type SessionStartHandler = (event: unknown, ctx: ExtensionContext) => void;
 
-	function mockPi() {
-		const providers = new Map<string, ProviderConfig>();
-		const commands: Array<{ name: string; options: { handler: (args: string) => Promise<void> } }> = [];
-		const sessionStartHandlers: SessionStartHandler[] = [];
-		const entries: Array<{ type: string; data: unknown }> = [];
-		const pi = {
-			registerProvider: (nameOrProvider: string | { id: string }, config?: ProviderConfig) => {
-				if (typeof nameOrProvider === "string" && config !== undefined) {
-					providers.set(nameOrProvider, config);
-				}
-			},
-			registerCommand: (name: string, options: { handler: (args: string) => Promise<void> }) => {
-				commands.push({ name, options });
-			},
-			on: (event: string, handler: SessionStartHandler) => {
-				if (event === "session_start") {
-					sessionStartHandlers.push(handler);
-				}
-				return () => {};
-			},
-			appendEntry: (type: string, data?: unknown) => {
-				entries.push({ type, data });
-			},
-			// 测试窥视口：动态清单用例经 pi 取捕获的 provider config。
-			providers,
-		} as unknown as ExtensionAPI;
-		return { pi, providers, commands, sessionStartHandlers, entries };
-	}
+function mockPi() {
+	const providers = new Map<string, ProviderConfig>();
+	const commands: Array<{ name: string; options: { handler: (args: string) => Promise<void> } }> = [];
+	const sessionStartHandlers: SessionStartHandler[] = [];
+	const pi = {
+		registerProvider: (nameOrProvider: string | { id: string }, config?: ProviderConfig) => {
+			if (typeof nameOrProvider === "string" && config !== undefined) {
+				providers.set(nameOrProvider, config);
+			}
+		},
+		registerCommand: (name: string, options: { handler: (args: string) => Promise<void> }) => {
+			commands.push({ name, options });
+		},
+		on: (event: string, handler: SessionStartHandler) => {
+			if (event === "session_start") {
+				sessionStartHandlers.push(handler);
+			}
+			return () => {};
+		},
+	} as unknown as ExtensionAPI;
+	return { pi, providers, commands, sessionStartHandlers };
+}
 
 function echoDefinition(overrides: Partial<WoolFamilyExtensionDefinition> = {}): WoolFamilyExtensionDefinition {
 	return {
@@ -53,241 +48,58 @@ function echoDefinition(overrides: Partial<WoolFamilyExtensionDefinition> = {}):
 	};
 }
 
-function refreshContext(overrides: Partial<RefreshModelsContext> = {}): RefreshModelsContext {
-	const publications: ModelsPublication[] = [];
-	return {
-		credential: undefined,
-		stored: undefined,
-		publish: async (publication: ModelsPublication) => {
-			publications.push(publication);
-			return true;
-		},
-		allowNetwork: true,
-		force: undefined,
-		signal: new AbortController().signal,
-		...overrides,
-		// 测试窥视口：外部经 context.publish 之外的途径读取记录——挂到函数属性上。
-		...( { publications } as Record<string, unknown>),
-	} as RefreshModelsContext & { publications: ModelsPublication[] };
-}
-
-describe("defineWoolExtension 接线", () => {
-	it("按 wool-<family> 注册 provider；api 必填语义由 pi 校验（此处确认透传）", () => {
+describe("defineWoolExtension 接线（瘦身形态）", () => {
+	it("按 wool-<family> 注册 provider；api/name/streamSimple 透传", () => {
 		const { pi, providers } = mockPi();
-		const factory = defineWoolExtension(echoDefinition({ staticModels: [] }));
-		factory(pi);
+		defineWoolExtension(echoDefinition())(pi);
 		const config = providers.get("wool-qoder");
 		expect(config).toBeDefined();
 		expect(config?.api).toBe("wool-qoder");
 		expect(config?.name).toBe("Wool Qoder");
 		expect(config?.streamSimple).toBeTypeOf("function");
-		expect(config?.refreshModels).toBeUndefined(); // 无 fetchModels = 静态清单 provider
 	});
 
-	it("静态清单：models 直接装载（echo 形态）", () => {
+	it("不声明 models（undefined）：pi composer applyExtension 保留 models.json 条目目录", () => {
 		const { pi, providers } = mockPi();
 		defineWoolExtension(echoDefinition())(pi);
-		const models = providers.get("wool-qoder")?.models ?? [];
-		expect(Array.isArray(models)).toBe(true);
+		// 声明空数组会把条目目录替换为空表（0 模型）——必须是 undefined。
+		expect(providers.get("wool-qoder")?.models).toBeUndefined();
 	});
 
-	it("静态清单 provider 不注册 refreshModels，管理命令按 handlers 注册", () => {
-		const { pi, providers, commands } = mockPi();
+	it("不定义 refreshModels（零上游拉取、零宿主目录缓存写入）", () => {
+		const { pi, providers } = mockPi();
+		defineWoolExtension(echoDefinition())(pi);
+		expect(providers.get("wool-qoder")?.refreshModels).toBeUndefined();
+	});
+
+	it("不注册管理命令（管理动作已迁 plugin-wool-<family>）", () => {
+		const { pi, commands } = mockPi();
+		defineWoolExtension(echoDefinition())(pi);
+		expect(commands).toHaveLength(0);
+	});
+
+	it("oauth 钩子原样透传（login/refreshToken/getApiKey）", () => {
+		const { pi, providers } = mockPi();
 		defineWoolExtension(
 			echoDefinition({
-				manageHandlers: { status: async () => ({ loggedIn: false }), detect: async () => ({}), checkin: async () => ({}), clear: async () => ({}) },
+				oauth: {
+					name: "Wool Qoder",
+					login: async () => ({ type: "oauth", access: "a", refresh: "r", expires: 0 }),
+					refreshToken: async (credentials) => credentials,
+					getApiKey: () => "key",
+				},
 			}),
 		)(pi);
-		expect(providers.get("wool-qoder")?.refreshModels).toBeUndefined();
-		expect(commands.map((command) => command.name)).toEqual(["wool-qoder"]);
-	});
-
-	describe("refreshModels（D4 语义 + P7 persist 结论）", () => {
-		function dynamicDefinition(): WoolFamilyExtensionDefinition {
-			return echoDefinition({
-				fetchModels: async (ctx) => {
-					if (!ctx.allowNetwork) {
-						throw new Error("family must not touch network in offline phase");
-					}
-					return [
-						{
-							id: "up-1",
-							name: "Upstream 1",
-							api: "wool-qoder",
-							provider: "wool-qoder",
-							baseUrl: "https://upstream.invalid",
-							type: "chat" as const,
-							reasoning: false,
-							input: ["text"],
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							contextWindow: 8192,
-							maxTokens: 1024,
-						},
-					];
-				},
-			});
-		}
-
-		it("离线阶段（allowNetwork=false）：家族不被调用；persist 有值即恢复", async () => {
-			const { pi } = mockPi();
-			defineWoolExtension(dynamicDefinition())(pi);
-			const providers = (pi as unknown as { providers: Map<string, ProviderConfig> }).providers;
-			const refreshModels = providers.get("wool-qoder")?.refreshModels;
-			expect(refreshModels).toBeTypeOf("function");
-
-			const context = refreshContext({
-				allowNetwork: false,
-				stored: {
-					models: [
-						{
-							id: "persisted",
-							name: "Persisted",
-							api: "wool-qoder",
-							provider: "wool-qoder",
-							baseUrl: "https://upstream.invalid",
-							type: "chat" as const,
-							reasoning: false,
-							input: ["text"],
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							contextWindow: 8192,
-							maxTokens: 1024,
-						},
-					],
-				},
-			});
-			const result = await refreshModels?.(context);
-			expect(result?.map((model) => (model as { id: string }).id)).toEqual(["persisted"]);
-		});
-
-		it("带网首拉：家族被调用 → replace → 扩展自己 publish persist（P7 结论）", async () => {
-			const { pi } = mockPi();
-			defineWoolExtension(dynamicDefinition())(pi);
-			const providers = (pi as unknown as { providers: Map<string, ProviderConfig> }).providers;
-			const refreshModels = providers.get("wool-qoder")?.refreshModels;
-			const context = refreshContext();
-			const result = await refreshModels?.(context);
-			expect(result?.map((model) => (model as { id: string }).id)).toEqual(["up-1"]);
-			const publications = (context as RefreshModelsContext & { publications: ModelsPublication[] }).publications;
-			expect(publications).toHaveLength(1);
-			expect(publications[0].persist).toBeDefined();
-			expect((publications[0].persist as { models: unknown[] }).models).toHaveLength(1);
-		});
-
-		it("缓存命中：进程内已有清单且非 force → 家族不被调用、零 publish", async () => {
-			const { pi } = mockPi();
-			defineWoolExtension(dynamicDefinition())(pi);
-			const providers = (pi as unknown as { providers: Map<string, ProviderConfig> }).providers;
-			const refreshModels = providers.get("wool-qoder")?.refreshModels;
-
-			const first = refreshContext();
-			await refreshModels?.(first);
-			const second = refreshContext();
-			const result = await refreshModels?.(second);
-			expect(result?.map((model) => (model as { id: string }).id)).toEqual(["up-1"]);
-			const publications = (second as RefreshModelsContext & { publications: ModelsPublication[] }).publications;
-			expect(publications).toHaveLength(0);
-		});
-
-		it("force=true 绕过缓存：家族再被调用 + persist 再 publish", async () => {
-			const { pi } = mockPi();
-			defineWoolExtension(dynamicDefinition())(pi);
-			const providers = (pi as unknown as { providers: Map<string, ProviderConfig> }).providers;
-			const refreshModels = providers.get("wool-qoder")?.refreshModels;
-			await refreshModels?.(refreshContext());
-			const forced = refreshContext({ force: true });
-			await refreshModels?.(forced);
-			const publications = (forced as RefreshModelsContext & { publications: ModelsPublication[] }).publications;
-			expect(publications).toHaveLength(1);
-		});
-	});
-
-	describe("clear 编排（D3 卸载编排②：persist:null 通道）", () => {
-		type MockPi = ReturnType<typeof mockPi>;
-		async function runClearCommand(
-			mock: MockPi,
-		): Promise<{ family: string; response: { v: number; ok: boolean; data?: unknown } } | undefined> {
-			const manage = mock.commands.find((command) => command.name === "wool-qoder");
-			expect(manage).toBeDefined();
-			await manage!.options.handler(JSON.stringify({ v: 1, action: "clear" }));
-			const last = mock.entries.filter((entry) => entry.type === "wool-manage-response").at(-1);
-			return last?.data as { family: string; response: { v: number; ok: boolean; data?: unknown } } | undefined;
-		}
-
-		it("动态 provider：家族 clear 后 publish({persist:null}) 删 persist 目录 + 清进程内清单，响应并入 persistCleared:true", async () => {
-			const mock = mockPi();
-			let familyClearCalled = false;
-			defineWoolExtension(
-				echoDefinition({
-					fetchModels: async () => [],
-					manageHandlers: {
-						status: async () => ({}),
-						detect: async () => ({}),
-						checkin: async () => ({}),
-						clear: async () => {
-							familyClearCalled = true;
-							return { cleared: true, note: "family-side clear" };
-						},
-					},
-				}),
-			)(mock.pi);
-			const providers = (mock.pi as unknown as { providers: Map<string, ProviderConfig> }).providers;
-			// refreshModels 先跑一次：建立 publish 通道（模拟管理会话 spawn 时的离线恢复阶段）。
-			const context = refreshContext({ allowNetwork: false });
-			await providers.get("wool-qoder")?.refreshModels?.(context);
-
-			const entry = await runClearCommand(mock);
-			expect(familyClearCalled).toBe(true);
-			const publications = (context as RefreshModelsContext & { publications: ModelsPublication[] }).publications;
-			expect(publications.some((publication) => publication.persist === null)).toBe(true);
-			expect(entry?.response.ok).toBe(true);
-			expect(entry?.response.data).toMatchObject({ cleared: true, persistCleared: true });
-		});
-
-		it("静态清单 provider：无 refreshModels 通道，clear 回 persistCleared:false（如实报告无可清）", async () => {
-			const mock = mockPi();
-			defineWoolExtension(
-				echoDefinition({
-					manageHandlers: {
-						status: async () => ({}),
-						detect: async () => ({}),
-						checkin: async () => ({}),
-						clear: async () => ({ cleared: false }),
-					},
-				}),
-			)(mock.pi);
-			const entry = await runClearCommand(mock);
-			expect(entry?.response.ok).toBe(true);
-			expect(entry?.response.data).toMatchObject({ cleared: false, persistCleared: false });
-		});
-
-		it("refreshModels 从未跑过的动态 provider：clear 回 persistCleared:false，家族 clear 仍执行", async () => {
-			const mock = mockPi();
-			let familyClearCalled = false;
-			defineWoolExtension(
-				echoDefinition({
-					fetchModels: async () => [],
-					manageHandlers: {
-						status: async () => ({}),
-						detect: async () => ({}),
-						checkin: async () => ({}),
-						clear: async () => {
-							familyClearCalled = true;
-							return {};
-						},
-					},
-				}),
-			)(mock.pi);
-			const entry = await runClearCommand(mock);
-			expect(familyClearCalled).toBe(true);
-			expect(entry?.response.data).toMatchObject({ persistCleared: false });
-		});
+		const oauth = providers.get("wool-qoder")?.oauth as Record<string, unknown> | undefined;
+		expect(typeof oauth?.login).toBe("function");
+		expect(typeof oauth?.refreshToken).toBe("function");
+		expect(typeof oauth?.getApiKey).toBe("function");
 	});
 
 	describe("streamSimple", () => {
 		it("经骨架执行家族 stream：事件流纪律成立", async () => {
 			const { pi, providers, sessionStartHandlers } = mockPi();
 			defineWoolExtension(echoDefinition())(pi);
-			// 模拟 pi 会话启动：session_start 捕获 registry（凭据解析器）。
 			for (const handler of sessionStartHandlers) {
 				handler({}, {
 					modelRegistry: {
@@ -305,7 +117,7 @@ describe("defineWoolExtension 接线", () => {
 			expectTextOutcome(events, "echo");
 		});
 
-		it("session_start 未跑即调 streamSimple → fail-fast 拒绝（生命周期 bug 不静默）", async () => {
+		it("session_start 未跑即调 streamSimple → fail-fast 拒绝（生命周期 bug 不静默）", () => {
 			const { pi, providers } = mockPi();
 			defineWoolExtension(echoDefinition())(pi);
 			const config = providers.get("wool-qoder");
@@ -315,9 +127,7 @@ describe("defineWoolExtension 接线", () => {
 		});
 
 		describe("凭据优先级（D2 双通道：options.apiKey > oauth 钩子 > 皆无报错）", () => {
-			/** 组装一个记录 resolvedAuth 的家族 stream + 已捕获 registry 的 streamSimple 环境。
-			 * model 带 cost 零费率（done 路径 calculateCost 不因缺 cost 抛错）；家族 stream
-			 * 对 ok:false 直抛（三家族 stream 的真实行为形态）。 */
+			/** 组装一个记录 resolvedAuth 的家族 stream + 已捕获 registry 的 streamSimple 环境。 */
 			async function setupStream(
 				registryResolve: () => Promise<{ ok: boolean; apiKey?: string; headers?: Record<string, string>; error?: string }>,
 			) {
@@ -393,7 +203,7 @@ describe("defineWoolExtension 接线", () => {
 			it("双通道皆无（registry ok 但无 apiKey）→ error 终态带统一「凭据未配置」", async () => {
 				const env = await setupStream(async () => ({ ok: true, headers: {} }));
 				const events = await env.run(undefined);
-				expectErrorOutcome(events, "凭据未配置：经 taiji 向导接入或在 pi 内 /login");
+				expectErrorOutcome(events, "凭据未配置：经 taiji 插件接入或在 pi 内 /login");
 				const seen = env.seenAuth as { ok: boolean; error: string };
 				expect(seen.ok).toBe(false);
 				expect(seen.error).toContain("凭据未配置");

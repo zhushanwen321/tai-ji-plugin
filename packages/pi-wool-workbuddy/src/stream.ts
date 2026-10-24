@@ -13,12 +13,17 @@ import type {
 } from "@zhushanwen/pi-wool-shared";
 import { parseSseStream } from "@zhushanwen/pi-wool-shared";
 
+import {
+	ARGUMENTS_DETAIL_MAX_CHARS,
+	buildChatHeaders,
+	CHAT_PATH,
+	decodeJwtClaims,
+	ERROR_DETAIL_MAX_CHARS,
+	realmConfig,
+	type WorkbuddyRealm,
+} from "@zhushanwen/pi-wool-shared/workbuddy";
+
 import { buildChatBody, encodeChatBody, parseToolArguments } from "./body.ts";
-import { ARGUMENTS_DETAIL_MAX_CHARS, CHAT_PATH, ERROR_DETAIL_MAX_CHARS } from "./constants.ts";
-import { buildChatHeaders } from "./headers.ts";
-import { decodeJwtClaims } from "./jwt.ts";
-import type { WorkbuddyRealm } from "./constants.ts";
-import { realmConfig } from "./headers.ts";
 
 /** 上游响应码语义（hub wb_proxy 实读：code==0 正常；非 0 为上游业务错误）。 */
 type UpstreamEnvelope = {
