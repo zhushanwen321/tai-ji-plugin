@@ -27,12 +27,46 @@ import {
 	buildExtractTree,
 	buildOAuthTree,
 	buildPatTree,
+	woolAccountStatusLine,
 	PAT_INPUT_COMPONENT_ID,
 	type WoolAuthorizePhase,
 } from "./gui.ts";
 
-/** 业务事件上报 channel 词表（plugin:event 的 channel；首消费方 = 凭据状态，D5）。 */
-export const WOOL_EVENT_CHANNEL_STATUS = "wool-status";
+/** 业务事件上报 channel 词表（plugin:event 的 channel；与宿主 renderer
+ * PluginProviderSource.CREDENTIAL_STATUS_CHANNEL 同字面——跨仓契约，宿主按它过滤）。 */
+export const WOOL_EVENT_CHANNEL_STATUS = "provider.credentialStatus";
+
+/** 授权挂载位主视图 viewId（宿主 ViewHost 按 viewId 精确匹配渲染，跨仓契约 = 挂载位
+ * 同名——快照 store 分区键 global:<mountId>:<pluginId> 内再按 viewId 查树）。 */
+const AUTHORIZE_VIEW_ID = "provider.authorize";
+
+/** 条目扩展区主视图 viewId（同上契约，挂载位 provider.detail-extra 同名）。 */
+const DETAIL_EXTRA_VIEW_ID = "provider.detail-extra";
+
+/** 宿主凭据状态展示契约（renderer PluginProviderSource.CredentialStatusPayload 的
+ * 返回值子形状：getStatus 返回值不带归属 providerId——归属已在 invoke params；
+ * plugin:event 推送载荷另补 providerId，见 emitStatusEvent）。 */
+interface CredentialStatusFields {
+	state: "valid" | "invalid";
+	message?: string;
+}
+
+/** 未接入态的一行文案（宿主状态行直接呈现——用户可操作的恢复入口在授权流程）。 */
+const NOT_CONNECTED_MESSAGE = "未接入：请先完成授权或提取";
+
+/** 账号状态 → 宿主展示契约形状（getStatus 返回值与状态推送载荷共用组装；未上报 = null
+ * ——宿主不显示任何标记，S5 不猜测。已登录但无昵称/额度素材（摘要空串）时省略 message
+ * ——宿主回落默认「凭据可用」文案，不渲染空白行）。 */
+function credentialStatusFields(status: WoolAccountStatus | undefined): CredentialStatusFields | null {
+	if (status === undefined) {
+		return null;
+	}
+	if (status.loggedIn !== true) {
+		return { state: "invalid", message: NOT_CONNECTED_MESSAGE };
+	}
+	const message = woolAccountStatusLine(status);
+	return message.length > 0 ? { state: "valid", message } : { state: "valid" };
+}
 
 /** plugin.invoke 方法注册的命令面板可见性：invoke 面向界面代码（D9），不进命令面板
  * ——注册不带 title；action-bar 按钮经 commandId 触达（executeCommand 与 invoke 复用
@@ -141,7 +175,7 @@ export function createWoolPlugin(definition: WoolPluginDefinition): (context: Wo
 							message: authorizeState.message,
 							summary: authorizeState.summary,
 						});
-			await api.views.update("authorize", tree, { mountId: "provider.authorize" });
+			await api.views.update(AUTHORIZE_VIEW_ID, tree, { mountId: AUTHORIZE_VIEW_ID });
 		}
 
 		function setAuthorizePhase(phase: WoolAuthorizePhase, patch: Partial<WoolAuthorizeState> = {}): Promise<void> {
@@ -231,11 +265,14 @@ export function createWoolPlugin(definition: WoolPluginDefinition): (context: Wo
 		}
 
 		async function emitStatusEvent(status: WoolAccountStatus | undefined): Promise<void> {
-			if (status === undefined) {
+			const fields = credentialStatusFields(status);
+			if (fields === null) {
 				return;
 			}
 			try {
-				await api.events.emit(WOOL_EVENT_CHANNEL_STATUS, { family: definition.familyId, status });
+				// 推送载荷带归属 providerId（宿主 parseCredentialStatus 契约：归属必带，
+				// 宿主按它落 providerId → 状态分区）。
+				await api.events.emit(WOOL_EVENT_CHANNEL_STATUS, { providerId, ...fields });
 			} catch (error) {
 				// 辅助链降级：事件出线缺失/失败不影响状态语义（getStatus 同步返回承载），
 				// 留痕不吞——warn 可从日志归因「有状态但渲染端未收到增量」。
@@ -381,11 +418,12 @@ export function createWoolPlugin(definition: WoolPluginDefinition): (context: Wo
 		});
 
 		await api.commands.register({ id: "getStatus" }, async () => {
-			// D5：同步返回本地最近已知状态；上游校验异步跟进（校验完经 plugin:event 增量
-			// 上报）+ 存量条目采纳链（S24）。
+			// D5：同步返回本地最近已知状态（宿主 CredentialStatusPayload 契约形状——renderer
+			// parseStatusFields 按它窄化渲染状态行）；上游校验异步跟进（校验完经 plugin:event
+			// 增量上报）+ 存量条目采纳链（S24）。未上报返回 null = 宿主不显示任何标记。
 			const known = statusCache.status;
 			void refreshStatus().then(() => adoptCatalogIfPending());
-			return { status: known };
+			return credentialStatusFields(known);
 		});
 
 		await api.commands.register({ id: "refreshCatalog" }, async () => {
@@ -432,7 +470,7 @@ export function createWoolPlugin(definition: WoolPluginDefinition): (context: Wo
 				checkinSupported: definition.checkin !== undefined,
 				autoCheckin: settings.autoCheckin,
 			});
-			await api.views.update("detail", tree, { mountId: "provider.detail-extra" });
+			await api.views.update(DETAIL_EXTRA_VIEW_ID, tree, { mountId: "provider.detail-extra" });
 			return { status: statusCache.status, autoCheckin: settings.autoCheckin };
 		});
 

@@ -13,40 +13,52 @@
 // 显式失败优于静默失效。
 
 // ── GuiComponent 协议段（最小镜像；SSOT = @zhushanwen/extension-protocol core/types）──
+//
+// 形状 = 宿主真形：{ type, props } 包装（props 由 type 决定）。旧镜像用扁平形状
+//（title/children/text 顶层），renderer 侧 isGuiComponent 校验全拒 → 树窄化为空数组、
+// ViewHost 渲染空白（d3-r14-ui 真机实测）——形状漂移由真机集成验收（P-wool-e2e）兜底
+// 的预言兑现，本镜像已按宿主 SSOT 修正。
 
 /** GuiComponent 联合的判别字段形态（与协议 PROTOCOL_VERSION 无关——组件形状子集）。 */
 export type WoolGuiComponent =
-	| { type: "group"; children: WoolGuiComponent[] }
+	| { type: "group"; props: { children: WoolGuiComponent[] } }
 	| {
 			type: "card";
-			title?: string;
-			children?: WoolGuiComponent[];
-			/** 键值行（宿主渲染为 label/value 对齐行）。 */
-			rows?: Array<{ label: string; value: string }>;
+			props: {
+				/** 卡头（宿主渲染为卡标题行；string 直渲染）。 */
+				header?: string | WoolGuiComponent;
+				/** 卡体子组件（必带——无内容的卡用 group 或空 body）。 */
+				body: WoolGuiComponent[];
+				variant?: "default" | "elevated" | "danger" | "success";
+			};
 	  }
-	| { type: "ansi-text"; text: string }
+	| { type: "ansi-text"; props: { lines: string[] } }
 	| {
 			type: "stats-line";
-			items: Array<{ label: string; value: string; severity?: "ok" | "warn" | "danger" }>;
+			props: { items: Array<{ label?: string; value: string; severity?: "ok" | "warn" | "danger" }> };
 	  }
 	| {
 			type: "action-bar";
-			items: Array<{
-				id: string;
-				label: string;
-				kind?: "danger";
-				disabled?: boolean;
-				commandId?: string;
-				args?: Record<string, string | number | boolean>;
-			}>;
+			props: {
+				items: Array<{
+					id: string;
+					label: string;
+					kind?: "danger";
+					disabled?: boolean;
+					commandId?: string;
+					args?: Record<string, string | number | boolean>;
+				}>;
+			};
 	  }
 	| {
 			type: "text-input";
-			id: string;
-			label?: string;
-			placeholder?: string;
-			value?: string;
-			multiline?: boolean;
+			props: {
+				id: string;
+				label?: string;
+				placeholder?: string;
+				value?: string;
+				multiline?: boolean;
+			};
 	  };
 
 // ── 宿主 API 域（消费形状子集）────────────────────────────────
@@ -73,7 +85,9 @@ export interface WoolPluginViews {
 	update(viewId: string, tree: WoolGuiComponent[], scope: { mountId: string }): Promise<void>;
 }
 
-/** 输入组件值回传事件（D8 plugin.uiEvent：`{ viewId, componentId, event, value }`）。 */
+/** 输入组件值回传事件（D8 plugin.uiEvent：`{ viewId, componentId, event, value }`）。
+ * viewId = 宿主挂载位容器的视图 id（provider.authorize / provider.detail-extra——
+ * 与 views.update 推树用同一 viewId 契约）。 */
 export interface WoolPluginUiEvent {
 	viewId: string;
 	componentId: string;

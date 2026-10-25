@@ -131,7 +131,7 @@ export function createFakeWoolPluginHost(options: {
 	};
 }
 
-/** 树遍历：指定 type 的全部节点（结构断言的通用工具）。 */
+/** 树遍历：指定 type 的全部节点（结构断言的通用工具；children 路径按 props 包装形状）。 */
 export function findGuiNodes(tree: WoolGuiComponent[], type: WoolGuiComponent["type"]): WoolGuiComponent[] {
 	const out: WoolGuiComponent[] = [];
 	const walk = (nodes: WoolGuiComponent[]): void => {
@@ -139,8 +139,11 @@ export function findGuiNodes(tree: WoolGuiComponent[], type: WoolGuiComponent["t
 			if (node.type === type) {
 				out.push(node);
 			}
-			if (node.type === "group" || node.type === "card") {
-				walk(node.children ?? []);
+			if (node.type === "group") {
+				walk(node.props.children);
+			}
+			if (node.type === "card") {
+				walk(node.props.body);
 			}
 		}
 	};
@@ -151,13 +154,13 @@ export function findGuiNodes(tree: WoolGuiComponent[], type: WoolGuiComponent["t
 /** 树内全部 action-bar 按钮的 commandId（按钮 → 插件方法接线断言）。 */
 export function guiCommandIds(tree: WoolGuiComponent[]): string[] {
 	return findGuiNodes(tree, "action-bar").flatMap((node) =>
-		node.type === "action-bar" ? node.items.map((item) => item.commandId ?? "") : [],
+		node.type === "action-bar" ? node.props.items.map((item) => item.commandId ?? "") : [],
 	);
 }
 
-/** 树内全部 ansi-text 文本拼接（文案断言用）。 */
+/** 树内全部 ansi-text 文本拼接（文案断言用；props.lines 按行拼接）。 */
 export function guiText(tree: WoolGuiComponent[]): string {
 	return findGuiNodes(tree, "ansi-text")
-		.map((node) => (node.type === "ansi-text" ? node.text : ""))
+		.map((node) => (node.type === "ansi-text" ? node.props.lines.join("\n") : ""))
 		.join("\n");
 }
