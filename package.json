@@ -9,6 +9,7 @@
     "typecheck": "npx tsc --noEmit",
     "lint": "npx eslint packages/ test-guard/",
     "test": "pnpm -r --filter \"@zhushanwen/pi-*\" --filter \"@zhushanwen/plugin-*\" --workspace-concurrency=1 test",
+    "check:package-artifacts": "node scripts/check-package-artifacts.mjs",
     "changeset-version": "changeset version",
     "changeset-publish": "changeset publish"
   },
