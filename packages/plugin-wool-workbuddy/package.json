@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/plugin-wool-workbuddy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "taiji plugin for the WorkBuddy (Tencent) wool provider family — OAuth authorization, account/check-in status, daily check-in, model catalog refresh.",
   "type": "module",
   "displayName": "WorkBuddy",
