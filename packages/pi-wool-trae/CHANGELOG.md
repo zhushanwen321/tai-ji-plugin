@@ -1,5 +1,12 @@
 # @zhushanwen/pi-wool-trae
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [934cdfd]
+  - @zhushanwen/pi-wool-shared@0.3.1
+
 ## 0.2.1
 
 ### Patch Changes

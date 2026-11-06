@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-wool-shared",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Shared kernel for wool provider families (@zhushanwen/pi-wool-* pi extensions and @zhushanwen/plugin-wool-* taiji plugins) — credential extraction/decryption, OAuth flows, account/quota/check-in status, model catalog fetch, provider scaffolding, SSE parsing and streamSimple conformance harness. Shared library, not a Pi extension.",
   "type": "module",
   "main": "src/index.ts",
