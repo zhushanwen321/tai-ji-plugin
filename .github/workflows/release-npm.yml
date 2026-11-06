@@ -41,6 +41,7 @@ jobs:
         run: |
           npx changeset version
           pnpm install --no-frozen-lockfile
+          pnpm run check:package-artifacts
           npx changeset publish
           git push origin HEAD:main || true
         env:
