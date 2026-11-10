@@ -29,6 +29,7 @@
     ],
     "permissions": [
       "plugin.commands.register",
+      "plugin.commands.invoke.result",
       "plugin.storage.global.get",
       "plugin.storage.global.set",
       "plugin.views.update",
