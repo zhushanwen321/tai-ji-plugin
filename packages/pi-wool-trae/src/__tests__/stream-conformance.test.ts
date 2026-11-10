@@ -18,7 +18,7 @@ import {
 import type { AssistantMessageEvent, Model, Api } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
-import { driveTraeStream } from "../stream.ts";
+import { driveTraeStream, extractToolcallsFromText } from "../stream.ts";
 
 const FIXTURE_DIR = join(import.meta.dirname, "fixtures");
 
@@ -283,5 +283,218 @@ describe("请求组装对照", () => {
 		expect(messages[0]?.content[0]?.text).toContain("base prompt");
 		expect(messages[0]?.content[0]?.text).toContain("<toolcall_protocol>");
 		expect(messages[0]?.content[0]?.text).toContain("read(path)");
+	});
+});
+
+// —— Qwen XML 方言容忍（<tool_call>）——
+// Qwen 系模型无视 <toolcall_protocol> 教学时直出训练方言（2026-11 真机实测
+// mimo-v2.6-flash：<tool_call><function=NAME><parameter=KEY>VALUE</parameter>…）；
+// 解析层双方言识别，归一走既有合并去重与 toolCall 发射链路。历史回写仍用
+// <toolcall> JSON 方言（有意的不对称，见 stream.ts assistantText 注释）。
+
+/** SSE 块构造（data 用 JSON.stringify 转义，避免手写嵌套转义）。 */
+function sseChunk(id: number, event: string, payload: unknown): string {
+	return `id:${id}\nevent:${event}\ndata:${JSON.stringify(payload)}\n\n`;
+}
+
+/** 事件序列中的全部工具调用（多调用断言辅助；expectToolCallOutcome 只收单调用）。 */
+function collectToolCalls(
+	events: readonly AssistantMessageEvent[],
+): Array<{ id?: string; name: string; arguments: Record<string, unknown> }> {
+	return events
+		.filter((event): event is Extract<AssistantMessageEvent, { type: "toolcall_end" }> => event.type === "toolcall_end")
+		.map((event) => ({ id: event.toolCall.id, name: event.toolCall.name, arguments: { ...event.toolCall.arguments } }));
+}
+
+/** 文本增量按序拼接（text_delta 全量）。 */
+function joinedText(events: readonly AssistantMessageEvent[]): string {
+	return events
+		.filter((event): event is Extract<AssistantMessageEvent, { type: "text_delta" }> => event.type === "text_delta")
+		.map((event) => event.delta)
+		.join("");
+}
+
+/** 按固定步长切片（跨增量截断用例：标签与参数值任意切断）。 */
+function sliceEvery(text: string, size: number): string[] {
+	const pieces: string[] = [];
+	for (let i = 0; i < text.length; i += size) {
+		pieces.push(text.slice(i, i + size));
+	}
+	return pieces;
+}
+
+/** 终态 done 事件 reason（toolUse/stop/length）。 */
+function doneReason(events: readonly AssistantMessageEvent[]): string | undefined {
+	const done = events.find((event): event is Extract<AssistantMessageEvent, { type: "done" }> => event.type === "done");
+	return done?.reason;
+}
+
+describe("Qwen XML 方言容忍（<tool_call> 训练方言）", () => {
+	// 真机取证形态（2026-11，mimo-v2.6-flash 经 SOLO 免费通道直出）
+	const QWEN_BASH =
+		"<tool_call><function=bash><parameter=command>env | grep -i PI_ | head -30</parameter></function></tool_call>";
+	const QWEN_WRITE =
+		"<tool_call><function=write><parameter=path>/tmp/report.md</parameter><parameter=content>line one\nline two with spaces</parameter></function></tool_call>";
+
+	it("真机样本形态（单参数）→ toolcall_end + stopReason(toolUse)，标记原文不漏出", async () => {
+		const chunks = [
+			sseChunk(1, "output", { response: QWEN_BASH, reasoning_content: null, tool_calls: null }),
+			sseChunk(2, "done", { finish_reason: "tool_calls" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		expectToolCallOutcome(events, { name: "bash", arguments: { command: "env | grep -i PI_ | head -30" } });
+		expect(doneReason(events)).toBe("toolUse");
+		expectTextOutcome(events, "");
+	});
+
+	it("多参数并存 + 值含空格与换行（原样取值不加工）", async () => {
+		const chunks = [
+			sseChunk(1, "output", { response: `写入${QWEN_WRITE}完毕`, reasoning_content: null, tool_calls: null }),
+			sseChunk(2, "done", { finish_reason: "tool_calls" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		expectToolCallOutcome(events, {
+			name: "write",
+			arguments: { path: "/tmp/report.md", content: "line one\nline two with spaces" },
+		});
+		expectTextOutcome(events, "写入完毕");
+	});
+
+	it("跨增量截断：标签与参数值按步长 5 任意切断 → 完整重组", async () => {
+		const block = `<thinking 前文>${QWEN_WRITE}<尾文>`;
+		const chunks = [
+			...sliceEvery(block, 5).map((piece, index) =>
+				sseChunk(index + 1, "output", { response: piece, reasoning_content: null, tool_calls: null }),
+			),
+			sseChunk(999, "done", { finish_reason: "tool_calls" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		expectToolCallOutcome(events, {
+			name: "write",
+			arguments: { path: "/tmp/report.md", content: "line one\nline two with spaces" },
+		});
+		expectTextOutcome(events, "<thinking 前文><尾文>");
+	});
+
+	it("未闭合 Qwen 块 → 原文保留为文本（不当工具消费），stopReason(stop)", async () => {
+		const unclosed = "<tool_call><function=bash><parameter=command>ls</parameter></function>";
+		const chunks = [
+			sseChunk(1, "output", { response: `before ${unclosed}`, reasoning_content: null, tool_calls: null }),
+			sseChunk(2, "done", { finish_reason: "stop" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		expect(joinedText(events)).toBe(`before ${unclosed}`);
+		expect(events.some((event) => event.type === "toolcall_end")).toBe(false);
+		expect(doneReason(events)).toBe("stop");
+	});
+
+	it("混合方言：<toolcall> JSON 与 <tool_call> XML 同段并存 → 按位置顺序都提取", async () => {
+		const mixed = [
+			"先读。",
+			'<toolcall>{"name":"read","params":{"path":"/tmp/a.txt"}}</toolcall>',
+			"再写。",
+			QWEN_WRITE,
+			"完成。",
+		].join("");
+		const chunks = [
+			sseChunk(1, "output", { response: mixed, reasoning_content: null, tool_calls: null }),
+			sseChunk(2, "done", { finish_reason: "tool_calls" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		const calls = collectToolCalls(events);
+		expect(calls.map((call) => call.name)).toEqual(["read", "write"]);
+		expect(calls[0]?.arguments).toEqual({ path: "/tmp/a.txt" });
+		expect(calls[1]?.arguments).toEqual({ path: "/tmp/report.md", content: "line one\nline two with spaces" });
+		expectTextOutcome(events, "先读。再写。完成。");
+	});
+
+	it("与原生 output.tool_calls 去重：同名工具文本形态跳过，保留原生条目", async () => {
+		const chunks = [
+			sseChunk(1, "output", {
+				response: QWEN_BASH,
+				reasoning_content: null,
+				tool_calls: [{ id: "call_1", name: "bash", params: { command: "ls -la" } }],
+			}),
+			sseChunk(2, "done", { finish_reason: "tool_calls" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		const calls = collectToolCalls(events);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.id).toBe("call_1");
+		expect(calls[0]?.arguments).toEqual({ command: "ls -la" });
+	});
+
+	it("前缀无歧义：正文裸 \"<tool\"（非标签）不误吞不丢字", async () => {
+		const chunks = [
+			sseChunk(1, "output", { response: "see <tool below", reasoning_content: null, tool_calls: null }),
+			sseChunk(2, "done", { finish_reason: "stop" }),
+		];
+		const events = await runStreamCase({ model: traeTestModel(), drive: driveWithFixture(chunks) });
+		assertConformantSequence(events);
+		expectTextOutcome(events, "see <tool below");
+		expect(events.some((event) => event.type === "toolcall_end")).toBe(false);
+	});
+});
+
+describe("extractToolcallsFromText 双方言提取（单元）", () => {
+	const QWEN_BASH =
+		"<tool_call><function=bash><parameter=command>env | grep -i PI_ | head -30</parameter></function></tool_call>";
+
+	it("Qwen 单参数：提取 name/params，标记外文本保留", () => {
+		const { remainingText, calls } = extractToolcallsFromText(`前言${QWEN_BASH}后记`);
+		expect(calls).toEqual([{ name: "bash", params: { command: "env | grep -i PI_ | head -30" } }]);
+		expect(remainingText).toBe("前言后记");
+	});
+
+	it("Qwen 无 parameter → params 空对象（无参工具合法）", () => {
+		const { calls } = extractToolcallsFromText("<tool_call><function=list_files></function></tool_call>");
+		expect(calls).toEqual([{ name: "list_files", params: {} }]);
+	});
+
+	it("混合方言按位置顺序提取；JSON 与 Qwen 解析互不干扰", () => {
+		const text = [
+			'<toolcall>{"name":"read","params":{"path":"/a"}}</toolcall>',
+			"中缝",
+			"<tool_call><function=write><parameter=path>/b</parameter></function></tool_call>",
+		].join("");
+		const { remainingText, calls } = extractToolcallsFromText(text);
+		expect(calls).toEqual([
+			{ name: "read", params: { path: "/a" } },
+			{ name: "write", params: { path: "/b" } },
+		]);
+		expect(remainingText).toBe("中缝");
+	});
+
+	it("未闭合 Qwen 块 → 块原文整体保留，calls 空", () => {
+		const unclosed = "<tool_call><function=bash><parameter=command>ls</parameter></function>";
+		const { remainingText, calls } = extractToolcallsFromText(`前${unclosed}`);
+		expect(calls).toEqual([]);
+		expect(remainingText).toBe(`前${unclosed}`);
+	});
+
+	it("坏结构（无 function 头）→ 块原文保留（不静默吞）", () => {
+		const bad = "<tool_call>garbage content</tool_call>";
+		const { remainingText, calls } = extractToolcallsFromText(bad);
+		expect(calls).toEqual([]);
+		expect(remainingText).toBe(bad);
+	});
+
+	it("坏结构（JSON 方言体非法）→ 块原文保留（与 Qwen 方言同语义对齐）", () => {
+		const bad = '<toolcall>not-json{"name":</toolcall>';
+		const { remainingText, calls } = extractToolcallsFromText(bad);
+		expect(calls).toEqual([]);
+		expect(remainingText).toBe(bad);
+	});
+
+	it("裸 \"<tool\" 与两方言标签前缀不构成完整开标签 → 不识别为调用", () => {
+		const { remainingText, calls } = extractToolcallsFromText("see <tool and <tool_ca but no tag");
+		expect(calls).toEqual([]);
+		expect(remainingText).toBe("see <tool and <tool_ca but no tag");
 	});
 });

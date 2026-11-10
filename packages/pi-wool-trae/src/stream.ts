@@ -10,7 +10,9 @@
 // - metadata/timing_cost/extra_info = 观测事件，经 onProviderStreamEvent 透传不进内容流；
 // - output.response → text 增量；output.reasoning_content → thinking 增量；
 //   output.tool_calls（原生形态）→ toolCall；
-// - 文本中的 <toolcall> 标签 → toolCall（文本协议兜底；带跨增量缓冲的状态机）；
+// - 文本工具协议标签 → toolCall（文本协议兜底；双方言容忍：<toolcall> JSON 教学
+//   方言 + <tool_call> Qwen XML 训练方言——Qwen 系模型常无视教学直出训练方言，
+//   2026-11 真机实测 mimo-v2.6-flash；带跨增量缓冲的状态机）；
 // - token_usage → usage 记账（input/output/cacheRead/cacheWrite）；
 // - done.finish_reason → stopReason（tool_calls → toolUse / length → length）；
 // - error 事件（限流/登录态失效等业务错误的真实形态 = HTTP 200 + SSE error 事件，
@@ -135,7 +137,12 @@ function contentText(parts: readonly unknown[]): string {
 	return out.join("");
 }
 
-/** assistant 消息 → Trae 文本（text + <toolcall> 标记；thinking 不回传上游）。 */
+/**
+ * assistant 消息 → Trae 文本（text + <toolcall> 标记；thinking 不回传上游）。
+ * 历史回写固定用 <toolcall> JSON 方言（有意的不对称）：协议教学在 system prompt
+ * （toolProtocolPrompt），响应侧对 <tool_call> Qwen 方言只做解析容忍、不回写——
+ * 模型见到的协议形态保持单一，避免上下文里两种方言互相污染放大跑偏。
+ */
 function assistantText(message: Message): string {
 	const record = asRecord(message);
 	if (record === undefined) {
@@ -218,13 +225,33 @@ function normalizeToolCall(raw: unknown, index: number): { id: string; name: str
 	return { id, name, arguments: args };
 }
 
-/** <toolcall> 文本协议标签（跨增量缓冲的边界记号）。 */
-const TOOLCALL_TAG = "<toolcall>";
+/**
+ * 文本工具协议方言表（响应侧解析容忍）：JSON 方言 = <toolcall_protocol> 教学形态；
+ * Qwen XML 方言 = Qwen 系模型无视教学时直出的训练方言（真机实测形态：
+ * <tool_call><function=bash><parameter=command>…</parameter></function></tool_call>）。
+ * 两个开标签互不为子串（第 6 字符 c 与 _ 分歧），完整文本扫描可安全 indexOf 共存。
+ */
+const TOOLCALL_DIALECTS = [
+	{ open: "<toolcall>", close: "</toolcall>", parse: parseJsonToolcallBody },
+	{ open: "<tool_call>", close: "</tool_call>", parse: parseQwenToolcallBody },
+] as const;
 
-/** 文本流中的 <toolcall> 提取器（流式发射 + 跨增量缓冲状态机）。 */
+/** 文本流中的工具协议标签提取器（流式发射 + 跨增量缓冲状态机，双方言）。 */
 class TextToolcallSplitter {
 	private buffered = "";
 	private collecting = false;
+
+	/** 尾部开标签前缀嫌疑长度（防跨增量截断扣留；取最长命中，无命中为 0）。 */
+	private openTagPrefixTailLength(): number {
+		const maxKeep = Math.max(...TOOLCALL_DIALECTS.map((dialect) => dialect.open.length)) - 1;
+		for (let k = Math.min(this.buffered.length, maxKeep); k >= 1; k--) {
+			const tail = this.buffered.slice(-k);
+			if (TOOLCALL_DIALECTS.some((dialect) => dialect.open.startsWith(tail))) {
+				return k;
+			}
+		}
+		return 0;
+	}
 
 	/** 喂入增量，返回可立即发射的文本（进入工具收集态后返回空串）。 */
 	push(delta: string): string {
@@ -232,12 +259,13 @@ class TextToolcallSplitter {
 		if (this.collecting) {
 			return "";
 		}
-		if (this.buffered.includes(TOOLCALL_TAG)) {
+		if (TOOLCALL_DIALECTS.some((dialect) => this.buffered.includes(dialect.open))) {
 			this.collecting = true;
 			return "";
 		}
-		// 保留尾部防跨块截断的 "<toolca…" 前缀嫌疑
-		const keep = Math.min(this.buffered.length, TOOLCALL_TAG.length - 1);
+		// 保留尾部防跨块截断的开标签前缀嫌疑（"<tool" 为两方言标签公共前缀；
+		// 只扣真正的前缀嫌疑尾巴，裸 "<tool" 随后续增量到齐后原样发射不丢字）
+		const keep = this.openTagPrefixTailLength();
 		const emitLength = this.buffered.length - keep;
 		if (emitLength <= 0) {
 			return "";
@@ -255,7 +283,46 @@ class TextToolcallSplitter {
 	}
 }
 
-/** 从完整文本提取 toolcall 标记与其余文本。 */
+/** JSON 方言块体解析：{"name":"…","params":{…}}（<toolcall_protocol> 教学形态）。 */
+function parseJsonToolcallBody(body: string): { name: string; params: JsonObject } | undefined {
+	const record = asRecord(parseJsonPayload(body));
+	const name = record !== undefined && typeof record.name === "string" ? record.name : undefined;
+	if (name === undefined) {
+		return undefined;
+	}
+	return { name, params: asJsonObject(record?.params) ?? {} };
+}
+
+/**
+ * Qwen XML 方言块体解析：<function=NAME><parameter=KEY>VALUE</parameter>…</function>。
+ * VALUE 按原始文本原样取值（含换行/特殊字符不处理）——XML 实体转义（&lt;/&amp; 等）
+ * 是否出现未实测（2026-11 真机样本未见转义），先不反转义；真机确认转义形态后再补。
+ * VALUE 内含 "</parameter>" 字面量时非贪婪匹配会在首个闭合截断——合法输出不含该
+ * 字面量，属可接受边界。函数名与参数键按标识符匹配（[^>\s]+），头缺失判坏块。
+ */
+function parseQwenToolcallBody(body: string): { name: string; params: JsonObject } | undefined {
+	const header = body.match(/^\s*<function=([^>\s]+)>/);
+	if (header === null) {
+		return undefined;
+	}
+	const functionBodyStart = header[0].length;
+	const functionEnd = body.indexOf("</function>", functionBodyStart);
+	// </function> 缺失时宽容取到块尾（函数名在位仍可消费；闭合缺失仅 </tool_call> 层面裁决）
+	const functionBody =
+		functionEnd === -1 ? body.slice(functionBodyStart) : body.slice(functionBodyStart, functionEnd);
+	const params: JsonObject = {};
+	const parameterPattern = /<parameter=([^>\s]+)>([\s\S]*?)<\/parameter>/g;
+	for (;;) {
+		const match = parameterPattern.exec(functionBody);
+		if (match === null) {
+			break;
+		}
+		params[match[1]] = match[2];
+	}
+	return { name: header[1], params };
+}
+
+/** 从完整文本提取工具协议标记（双方言）与其余文本。 */
 export function extractToolcallsFromText(
 	text: string,
 ): { remainingText: string; calls: Array<{ name: string; params: JsonObject }> } {
@@ -263,26 +330,34 @@ export function extractToolcallsFromText(
 	const remaining: string[] = [];
 	let cursor = 0;
 	for (;;) {
-		const start = text.indexOf("<toolcall>", cursor);
-		if (start === -1) {
+		// 两方言开标签取最早出现者（同一文本可混合出现，按位置保序提取）
+		let hit: { dialect: (typeof TOOLCALL_DIALECTS)[number]; start: number } | undefined;
+		for (const dialect of TOOLCALL_DIALECTS) {
+			const at = text.indexOf(dialect.open, cursor);
+			if (at !== -1 && (hit === undefined || at < hit.start)) {
+				hit = { dialect, start: at };
+			}
+		}
+		if (hit === undefined) {
 			remaining.push(text.slice(cursor));
 			break;
 		}
-		remaining.push(text.slice(cursor, start));
-		const end = text.indexOf("</toolcall>", start);
+		remaining.push(text.slice(cursor, hit.start));
+		const bodyStart = hit.start + hit.dialect.open.length;
+		const end = text.indexOf(hit.dialect.close, bodyStart);
 		if (end === -1) {
 			// 未闭合标记：原文保留（模型输出截断形态，不当工具消费）
-			remaining.push(text.slice(start));
+			remaining.push(text.slice(hit.start));
 			break;
 		}
-		const parsed = parseJsonPayload(text.slice(start + "<toolcall>".length, end));
-		const record = asRecord(parsed);
-		const name = record !== undefined && typeof record.name === "string" ? record.name : undefined;
-		if (name !== undefined) {
-			const params = asJsonObject(record?.params) ?? {};
-			calls.push({ name, params });
+		const call = hit.dialect.parse(text.slice(bodyStart, end));
+		if (call === undefined) {
+			// 结构解析失败：块原文保留（不当工具消费、不静默吞——方言跑偏对用户可见）
+			remaining.push(text.slice(hit.start, end + hit.dialect.close.length));
+		} else {
+			calls.push(call);
 		}
-		cursor = end + "</toolcall>".length;
+		cursor = end + hit.dialect.close.length;
 	}
 	return { remainingText: remaining.join(""), calls };
 }
