@@ -3,10 +3,11 @@
 // 链路：组装请求体（chat-body）→ qoderEncode → COSY 签名头 → globalThis.fetch（D1
 // 约束：统一走包装层）→ SSE 信封解包（参考实现 iter_inner_sse 同规则）→ 内层 OpenAI
 // chunk 事件翻译（driver 发射；事件流纪律由 wool-shared createAssistantStream 骨架
-// 承担）。start 事件在响应建立成功后发出（请求建立失败发生在 start 之前，骨架直接
-// 以 error 终态）。
+// 承担）。start 事件在首个信封确认非排队通知后发出（请求建立失败与排队预算耗尽都
+// 发生在 start 之前，骨架直接以 error 终态）；上游免费档排队（403 isQueued 信封）
+// 按 retryAfterSeconds 轮询重发，总预算 QUEUE_TOTAL_BUDGET_MS 封顶。
 
-import type { WoolStreamDriverContext, WoolStreamOutcome } from "@zhushanwen/pi-wool-shared";
+import type { SseEvent, WoolStreamDriverContext, WoolStreamOutcome } from "@zhushanwen/pi-wool-shared";
 import { parseSseStream, WoolStreamAdapterError } from "@zhushanwen/pi-wool-shared";
 import type { JsonObject, Message, Tool } from "@earendil-works/pi-ai";
 
@@ -21,6 +22,15 @@ const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 /** 错误消息内上游响应摘录的最大长度（防长错误文本刷屏）。 */
 const ERROR_DETAIL_LENGTH = 300;
+/** 上游排队轮询总预算（毫秒）：真机实测 auto 档 ~7 分钟排到；预算内未排到即报
+ * 可操作错误，不做无限等待。 */
+const QUEUE_TOTAL_BUDGET_MS = 10 * 60 * 1000;
+/** 排队通知缺省重试间隔（秒）：通知载荷无可读数值时的兜底。 */
+const QUEUE_RETRY_DEFAULT_SECONDS = 60;
+/** 重试间隔下限（毫秒）：上游给出 0/极小值时防紧密重试环。 */
+const QUEUE_RETRY_FLOOR_MS = 1000;
+/** 排队等待期的 abort 检查粒度（毫秒）。 */
+const QUEUE_DELAY_SLICE_MS = 250;
 
 /** 内层 OpenAI chunk 的工具调用增量形态。 */
 type UpstreamToolCallDelta = {
@@ -79,6 +89,64 @@ function envelopeStatus(envelope: OuterEnvelope): number | undefined {
 		return Number.isFinite(parsed) ? parsed : undefined;
 	}
 	return undefined;
+}
+
+/** 上游排队通知（免费档饱和时网关以 SSE 信封投递：statusCodeValue 403 + isQueued 载荷，
+ * 实测含 queueType "p4" / waitTime / retryAfterSeconds；模型在队列排到前拒绝服务）。 */
+type QueueNotice = { retryAfterSeconds: number; detail: string };
+
+/** 排队信封判定：仅认 statusCodeValue 403 + body 载荷 isQueued === true。其余非 200
+ * 信封（凭据被拒、内容风控等）维持流内抛错路径——排队判定不得吞掉它们。body 兼容
+ * 字符串（正常信封形态：内层 JSON 字符串）与对象两种形态；入参 undefined（无信封）
+ * 一律非排队。 */
+function queueNoticeFrom(envelope: Record<string, unknown> | undefined): QueueNotice | undefined {
+	if (envelope === undefined || envelopeStatus(envelope as OuterEnvelope) !== HTTP_FORBIDDEN) {
+		return undefined;
+	}
+	let payload: Record<string, unknown> | undefined;
+	if (typeof envelope.body === "string") {
+		payload = parseJsonObject(envelope.body);
+	} else if (typeof envelope.body === "object" && envelope.body !== null && !Array.isArray(envelope.body)) {
+		payload = envelope.body as Record<string, unknown>;
+	}
+	if (payload === undefined || payload.isQueued !== true) {
+		return undefined;
+	}
+	const retryAfterSeconds =
+		typeof payload.retryAfterSeconds === "number" && Number.isFinite(payload.retryAfterSeconds)
+			? payload.retryAfterSeconds
+			: typeof payload.waitTime === "number" && Number.isFinite(payload.waitTime)
+				? payload.waitTime
+				: QUEUE_RETRY_DEFAULT_SECONDS;
+	return { retryAfterSeconds, detail: JSON.stringify(envelope).slice(0, ERROR_DETAIL_LENGTH) };
+}
+
+/** 取流的首个 JSON 信封事件（跳过计时元数据等非 JSON 行）；流耗尽返回 undefined。 */
+async function nextJsonEnvelope(events: AsyncGenerator<SseEvent>): Promise<SseEvent | undefined> {
+	for (;;) {
+		const step = await events.next();
+		if (step.done) {
+			return undefined;
+		}
+		if (parseJsonObject(step.value.data) !== undefined) {
+			return step.value;
+		}
+	}
+}
+
+/** 可中断等待（abort 检查粒度 QUEUE_DELAY_SLICE_MS；aborted 时与流内中断同口径抛 "aborted"）。 */
+async function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+	const deadline = Date.now() + ms;
+	for (;;) {
+		if (signal.aborted) {
+			throw new Error("aborted");
+		}
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) {
+			return;
+		}
+		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(QUEUE_DELAY_SLICE_MS, remaining)));
+	}
 }
 
 /** 工具调用增量聚合器（hub aggregate_stream 口径：按 index 分组，id/name/arguments
@@ -190,97 +258,137 @@ export function createQoderDrive(options: {
 		const encodedBody = qoderEncode(new Uint8Array(Buffer.from(payloadText, "utf8")));
 
 		const url = `${GATEWAY_BASE_URL}${CHAT_PATH}`;
-		const response = await fetchImpl(url, {
-			method: "POST",
-			headers: session.headers(encodedBody, url, modelKey, true),
-			body: encodedBody,
-			signal: driver.signal,
-		});
-		await driver.onResponse({ status: response.status, headers: Object.fromEntries(response.headers.entries()) });
-		if (!response.ok) {
-			const detail = (await response.text()).slice(0, ERROR_DETAIL_LENGTH);
-			// 401/403 = 凭据被拒（token 失效/风控），消息指向重新登录恢复动作。
-			const rejected = response.status === HTTP_UNAUTHORIZED || response.status === HTTP_FORBIDDEN;
-			const hint = rejected ? " (credential rejected; re-login the provider)" : "";
-			throw new Error(`qoder chat upstream HTTP ${response.status}${hint}: ${detail}`);
-		}
-		if (response.body === null) {
-			throw new Error("qoder chat upstream returned an empty body");
-		}
-
-		driver.open();
-
-		const aggregator = new ToolCallAggregator();
-		const usage: WoolStreamOutcome["usage"] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-		let stopReason: WoolStreamOutcome["stopReason"] = "stop";
-		let responseId: string | undefined;
-		let sawFinish = false;
-
-		for await (const event of parseSseStream(response.body, driver.signal)) {
-			if (driver.signal.aborted) {
-				throw new Error("aborted");
+		// 排队轮询环：每轮重新签名发请求（COSY 头含时戳，不可复用首轮头）。排队
+		// 通知必须在 driver.open() 之前消化——骨架 open() 只许调用一次（发 start），
+		// 重试轮不得再发；预算耗尽报可操作错误，不做无限等待。
+		const queueDeadline = Date.now() + QUEUE_TOTAL_BUDGET_MS;
+		let queueRetries = 0;
+		for (;;) {
+			const response = await fetchImpl(url, {
+				method: "POST",
+				headers: session.headers(encodedBody, url, modelKey, true),
+				body: encodedBody,
+				signal: driver.signal,
+			});
+			await driver.onResponse({ status: response.status, headers: Object.fromEntries(response.headers.entries()) });
+			if (!response.ok) {
+				const detail = (await response.text()).slice(0, ERROR_DETAIL_LENGTH);
+				// 401/403 = 凭据被拒（token 失效/风控），消息指向重新登录恢复动作。
+				const rejected = response.status === HTTP_UNAUTHORIZED || response.status === HTTP_FORBIDDEN;
+				const hint = rejected ? " (credential rejected; re-login the provider)" : "";
+				throw new Error(`qoder chat upstream HTTP ${response.status}${hint}: ${detail}`);
 			}
-			const envelope = parseJsonObject(event.data);
-			if (envelope === undefined) {
+			if (response.body === null) {
+				throw new Error("qoder chat upstream returned an empty body");
+			}
+
+			// 窥探首个 JSON 信封（跳过计时元数据行）：排队通知则等待后重发整请求；
+			// 否则进入正常消费——窥探持有的事件经 pending 槽交回主循环处理。
+			const events = parseSseStream(response.body, driver.signal);
+			const head = await nextJsonEnvelope(events);
+			const queue = head === undefined ? undefined : queueNoticeFrom(parseJsonObject(head.data));
+			if (queue !== undefined) {
+				await events.return(undefined);
+				await response.body.cancel();
+				const waitMs = Math.max(queue.retryAfterSeconds * 1000, QUEUE_RETRY_FLOOR_MS);
+				if (Date.now() + waitMs > queueDeadline) {
+					throw new Error(
+						`qoder chat upstream queue not drained within ${Math.round(QUEUE_TOTAL_BUDGET_MS / 1000)}s ` +
+							`after ${queueRetries} retries (last notice: ${queue.detail}); ` +
+							"retry later or switch model",
+					);
+				}
+				await abortableDelay(waitMs, driver.signal);
+				queueRetries += 1;
 				continue;
 			}
-			await driver.onProviderStreamEvent(envelope);
-			const status = envelopeStatus(envelope);
+
+			driver.open();
+
+			const aggregator = new ToolCallAggregator();
+			const usage: WoolStreamOutcome["usage"] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+			let stopReason: WoolStreamOutcome["stopReason"] = "stop";
+			let responseId: string | undefined;
+			let sawFinish = false;
+
+			let pending: SseEvent | undefined = head;
+			for (;;) {
+				let event: SseEvent;
+				if (pending !== undefined) {
+					event = pending;
+					pending = undefined;
+				} else {
+					const step = await events.next();
+					if (step.done) {
+						break;
+					}
+					event = step.value;
+				}
+				if (driver.signal.aborted) {
+					throw new Error("aborted");
+				}
+				const envelope = parseJsonObject(event.data);
+				if (envelope === undefined) {
+					continue;
+				}
+				await driver.onProviderStreamEvent(envelope);
+				const status = envelopeStatus(envelope);
 				if (status !== undefined && status !== HTTP_OK) {
 					const detail = typeof envelope.body === "string" ? envelope.body : JSON.stringify(envelope);
 					throw new Error(`qoder chat upstream envelope status ${status}: ${detail.slice(0, ERROR_DETAIL_LENGTH)}`);
 				}
-			if (envelope.body === "[DONE]") {
-				break;
-			}
-			if (typeof envelope.body !== "string") {
-				continue;
-			}
-			const chunk = parseJsonObject(envelope.body) as UpstreamChunk | undefined;
-			if (chunk === undefined) {
-				continue;
-			}
-			if (typeof chunk.id === "string" && chunk.id.length > 0) {
-				responseId = chunk.id;
-			}
-			// usage: null 是上游中间 chunk 的合法形态（!== undefined 挡不住 null）
-			if (chunk.usage !== undefined && chunk.usage !== null) {
-				usage.input = chunk.usage.prompt_tokens ?? usage.input;
-				usage.output = chunk.usage.completion_tokens ?? usage.output;
-				usage.cacheRead =
-					chunk.usage.prompt_cache_hit_tokens ?? chunk.usage.prompt_tokens_details?.cached_tokens ?? usage.cacheRead;
-			}
-			for (const choice of chunk.choices ?? []) {
-				const delta = choice.delta ?? {};
-				const text = contentText(delta.content);
-				if (text.length > 0) {
-					driver.text(text);
+				if (envelope.body === "[DONE]") {
+					break;
 				}
-				if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
-					driver.thinking(delta.reasoning_content);
+				if (typeof envelope.body !== "string") {
+					continue;
 				}
-				aggregator.absorb(delta.tool_calls);
-				if (choice.finish_reason === "length") {
-					stopReason = "length";
-					sawFinish = true;
-				} else if (choice.finish_reason === "tool_calls") {
-					stopReason = "toolUse";
-					sawFinish = true;
-				} else if (choice.finish_reason === "stop") {
-					stopReason = "stop";
-					sawFinish = true;
+				const chunk = parseJsonObject(envelope.body) as UpstreamChunk | undefined;
+				if (chunk === undefined) {
+					continue;
+				}
+				if (typeof chunk.id === "string" && chunk.id.length > 0) {
+					responseId = chunk.id;
+				}
+				// usage: null 是上游中间 chunk 的合法形态（!== undefined 挡不住 null）
+				if (chunk.usage !== undefined && chunk.usage !== null) {
+					usage.input = chunk.usage.prompt_tokens ?? usage.input;
+					usage.output = chunk.usage.completion_tokens ?? usage.output;
+					usage.cacheRead =
+						chunk.usage.prompt_cache_hit_tokens ?? chunk.usage.prompt_tokens_details?.cached_tokens ?? usage.cacheRead;
+				}
+				for (const choice of chunk.choices ?? []) {
+					const delta = choice.delta ?? {};
+					const text = contentText(delta.content);
+					if (text.length > 0) {
+						driver.text(text);
+					}
+					if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+						driver.thinking(delta.reasoning_content);
+					}
+					aggregator.absorb(delta.tool_calls);
+					if (choice.finish_reason === "length") {
+						stopReason = "length";
+						sawFinish = true;
+					} else if (choice.finish_reason === "tool_calls") {
+						stopReason = "toolUse";
+						sawFinish = true;
+					} else if (choice.finish_reason === "stop") {
+						stopReason = "stop";
+						sawFinish = true;
+					}
 				}
 			}
-		}
 
-		for (const call of aggregator.settle()) {
-			driver.toolCall({ id: call.id, name: call.name, arguments: call.arguments });
+			for (const call of aggregator.settle()) {
+				driver.toolCall({ id: call.id, name: call.name, arguments: call.arguments });
+			}
+			if (!sawFinish) {
+				// 上游断流未给 finish_reason：按 stop 终态收尾（内容已完整透传；
+				// 显式留痕避免静默吞掉异常断流形态——usage 为零即是观测信号）。
+				stopReason = "stop";
+			}
+			return { usage, stopReason, ...(responseId !== undefined ? { responseId } : {}) };
 		}
-		if (!sawFinish) {
-			// 上游断流未给 finish_reason：按 stop 终态收尾（内容已完整透传；
-			// 显式留痕避免静默吞掉异常断流形态——usage 为零即是观测信号）。
-			stopReason = "stop";
-		}
-		return { usage, stopReason, ...(responseId !== undefined ? { responseId } : {}) };
 	};
 }

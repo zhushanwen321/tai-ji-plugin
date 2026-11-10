@@ -301,3 +301,89 @@ function sseBodyOf(chunks: readonly string[]): ReadableStream<Uint8Array> {
 		},
 	});
 }
+
+/** 顺序响应 fetch 桩：按调用序取 responses[i]；超出预期次数抛错（重试环失控时
+ * fail-fast，不静默重复末个响应）。 */
+function sequentialFetch(responses: readonly Response[]): { fetch: typeof globalThis.fetch; callCount(): number } {
+	let call = 0;
+	const impl = async (): Promise<Response> => {
+		const response = responses[call];
+		if (response === undefined) {
+			throw new Error(`sequential fetch: unexpected call #${call + 1}`);
+		}
+		call += 1;
+		return response;
+	};
+	return { fetch: impl as typeof globalThis.fetch, callCount: () => call };
+}
+
+/** 排队通知帧（2026-11-10 真机捕获形态：403 信封 + isQueued 载荷，p4 队列）。 */
+function queueFrame(retryAfterSeconds: number): string {
+	return sseDataChunk({
+		body: JSON.stringify({ code: "RESOURCE_LIMIT", isQueued: true, queueType: "p4", waitTime: retryAfterSeconds, retryAfterSeconds }),
+		statusCodeValue: 403,
+	});
+}
+
+describe("排队通知轮询（403 isQueued 信封 → retryAfterSeconds 重试）", () => {
+	it("排队一轮后成功：等待后重发请求，start 只发一次、正文完整", async () => {
+		const okBody = sseBodyOf([
+			envelope({ id: "chatcmpl-q1", choices: [{ index: 0, delta: { content: "排到了" } }] }),
+			envelope({ id: "chatcmpl-q1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+			DONE_FRAME,
+		]);
+		const { fetch: fetchImpl, callCount } = sequentialFetch([
+			new Response(sseBodyOf([queueFrame(1)]), { status: 200 }),
+			new Response(okBody, { status: 200 }),
+		]);
+		const events = await runQoderCase({ fetchImpl });
+		assertConformantSequence(events);
+		expectTextOutcome(events, "排到了");
+		expect(callCount()).toBe(2);
+		// 重试轮在 driver.open() 之前消化排队通知——start 恰一次
+		expect(events.filter((event) => event.type === "start").length).toBe(1);
+	});
+
+	it("排队载荷为对象形态（body 非 JSON 字符串）同样识别", async () => {
+		const okBody = sseBodyOf([
+			envelope({ choices: [{ index: 0, delta: { content: "ok" } }] }),
+			envelope({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+			DONE_FRAME,
+		]);
+		const objectFrame = sseDataChunk({ body: { isQueued: true, queueType: "p4", retryAfterSeconds: 1 }, statusCodeValue: 403 });
+		const { fetch: fetchImpl, callCount } = sequentialFetch([
+			new Response(sseBodyOf([objectFrame]), { status: 200 }),
+			new Response(okBody, { status: 200 }),
+		]);
+		const events = await runQoderCase({ fetchImpl });
+		expectTextOutcome(events, "ok");
+		expect(callCount()).toBe(2);
+	});
+
+	it("预算耗尽（下一轮等待将超总预算）→ start 前 error 终态，消息可操作", async () => {
+		const { fetch: fetchImpl, callCount } = sequentialFetch([new Response(sseBodyOf([queueFrame(9999)]), { status: 200 })]);
+		const events = await runQoderCase({ fetchImpl });
+		expectErrorOutcome(events, "queue not drained");
+		expect(events.some((event) => event.type === "start")).toBe(false);
+		expect(callCount()).toBe(1);
+	});
+
+	it("排队等待期 abort → aborted 终态", async () => {
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(), 100);
+		const { fetch: fetchImpl } = sequentialFetch([new Response(sseBodyOf([queueFrame(30)]), { status: 200 })]);
+		const events = await runQoderCase({ fetchImpl, signal: controller.signal });
+		expectAbortOutcome(events);
+	});
+
+	it("非排队 403 信封（isQueued 缺失）→ 立即 error，不进入重试", async () => {
+		const { fetch: fetchImpl, callCount } = sequentialFetch([
+			new Response(sseBodyOf([envelope({ error: { code: "AUTH_EXPIRED", message: "token rejected" } }, 403)]), { status: 200 }),
+		]);
+		const events = await runQoderCase({ fetchImpl });
+		expectErrorOutcome(events, "envelope status 403");
+		// 非排队信封走流内抛错路径——start 已发出（与排队通知的 start 前失败相区别）
+		expect(events.some((event) => event.type === "start")).toBe(true);
+		expect(callCount()).toBe(1);
+	});
+});
