@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/plugin-wool-qoder",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "taiji plugin for the Qoder (Alibaba) wool provider family — local credential extraction, PAT fallback, account/quota status, model catalog refresh.",
   "type": "module",
   "displayName": "Qoder (Wool)",

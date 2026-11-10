@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/plugin-wool-trae",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "taiji plugin for the Trae wool provider family — storage.json credential extraction, account status, model catalog refresh.",
   "type": "module",
   "displayName": "Trae (Wool)",

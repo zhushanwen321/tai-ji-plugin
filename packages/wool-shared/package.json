@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-wool-shared",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Shared kernel for wool provider families (@zhushanwen/pi-wool-* pi extensions and @zhushanwen/plugin-wool-* taiji plugins) — credential extraction/decryption, OAuth flows, account/quota/check-in status, model catalog fetch, provider scaffolding, SSE parsing and streamSimple conformance harness. Shared library, not a Pi extension.",
   "type": "module",
   "main": "src/index.ts",
@@ -45,10 +45,12 @@
     "typecheck": "npx tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "typebox": "1.3.27"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "^1.0.0",
-    "@earendil-works/pi-coding-agent": "^1.0.0",
-    "typebox": "1.3.27"
+    "@earendil-works/pi-coding-agent": "^1.0.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
@@ -56,16 +58,12 @@
     },
     "@earendil-works/pi-coding-agent": {
       "optional": true
-    },
-    "typebox": {
-      "optional": true
     }
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^1.0.0",
     "@earendil-works/pi-coding-agent": "^1.0.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "typebox": "1.3.27",
     "vitest": "^4.1.8"
   },
   "repository": {
