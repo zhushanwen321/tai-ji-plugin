@@ -1,5 +1,11 @@
 # @zhushanwen/plugin-wool-workbuddy
 
+## 0.1.3
+
+### Patch Changes
+
+- 95a5fea: Declare the plugin SDK permissions the wool skeletons actually call (`plugin.commands.register`, `plugin.storage.global.get/set`, `plugin.views.update`, `plugin.ui.openUrl`, `plugin.event`, `providers.write`, `providers.credential`) in each taijiPlugin manifest. The taiji host authorizes sandbox-channel RPC methods fail-closed against the declared set, so activating the published 0.1.2 packages failed with `PERMISSION_DENIED` and the installer rolled the installation back.
+
 ## 0.1.2
 
 ### Patch Changes
