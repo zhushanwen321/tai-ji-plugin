@@ -27,6 +27,16 @@
       "crypto",
       "fs.read-user-data"
     ],
+    "permissions": [
+      "plugin.commands.register",
+      "plugin.storage.global.get",
+      "plugin.storage.global.set",
+      "plugin.views.update",
+      "plugin.ui.openUrl",
+      "plugin.event",
+      "providers.write",
+      "providers.credential"
+    ],
     "readPaths": [
       ".taiji/plugins/zhushanwen__plugin-wool-workbuddy"
     ],
